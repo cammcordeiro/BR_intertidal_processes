@@ -22,6 +22,7 @@ nodi_sz <- read.csv("data/nodi_sz2020.csv", header=T, encoding = "UTF-8") %>%
 # nodi_sz$subregion <- factor(nodi_sz$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
 nodi_ab <- read.delim("data/nodi.txt", header=T, encoding="UTF-8") %>% 
   rename(site = X.U.FEFF.site) %>% 
+  filter(abund < 1000) %>% 
   group_by(site, subregion, region) %>% 
   summarise(abund = mean(abund, na.rm = TRUE))
 # nodi$subregion <- factor(nodi$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))

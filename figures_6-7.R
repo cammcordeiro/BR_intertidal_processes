@@ -6,6 +6,7 @@ library(tidyverse)
 library(ggplot2)
 library(ggeffects)
 library(glmmTMB)
+library(patchwork)
 
 ##################################
 ## STRAMONITA #####
@@ -34,13 +35,13 @@ str_wf <- read.csv("data/stramonita_abundance.txt", header=T, sep="\t") %>%
   data.frame() %>% 
   rename(wf_log = x) %>% 
   ggplot(aes(wf_log, predicted)) + 
-  geom_point(data = read.csv("data/stramonita_abundance.txt", header=T, sep="\t"),
-             aes(wf_log, abund), size= 2.2, alpha=0.3) + 
-  geom_smooth(aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
-  theme_pred +
-  labs(x = "log[wave fetch (km)]", y = "Abundance (n)") +
-  scale_y_continuous(breaks = seq(0, 95, 15)) + 
-  ggtitle ('Stramonita haemastoma')
+    geom_point(data = read.csv("data/stramonita_abundance.txt", header=T, sep="\t"),
+               aes(wf_log, abund), size= 2.2, alpha=0.3) + 
+    geom_smooth(aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
+    theme_pred +
+    labs(x = "log[wave fetch (km)]", y = "Abundance (n)") +
+    scale_y_continuous(breaks = seq(0, 95, 15)) + 
+    ggtitle ('Stramonita haemastoma')
 
 ## prediction for presence of mussel Perna perna
 teste <- read.csv("data/stramonita_abundance.txt", header=T, sep="\t") %>% 
@@ -54,38 +55,52 @@ teste <- read.csv("data/stramonita_abundance.txt", header=T, sep="\t") %>%
 str_pp <- read.csv("data/stramonita_abundance.txt", header=T, sep="\t") %>% 
   mutate(Pp_ok = plyr::mapvalues(Pp_ok, from = c(0, 1), to = c("absent", "present"))) %>% 
   ggplot(aes(Pp_ok, abund)) + 
-  geom_jitter(position=position_jitter(0.1), alpha=0.5, size=2.5, color="darkgray")+
-  geom_smooth() +
-  theme_pred +
-  labs(x = expression(paste(italic("Perna perna"), " occurrence")), 
-       y = "") +  #"Abundance (n)"
-       # y = expression(paste("Density (whelks 1.25",m^-2,")"))) +
-  scale_y_continuous(breaks = seq(0, 95, 15)) +
-  geom_errorbar(data=teste, width=0.1, aes(ymin = abund-conf.low, ymax = abund+conf.low, x = Pp_ok), colour="black") + 
-  geom_point(data=teste, size= 4, bg="black", shape=21, color="lightgray") +
-  ggtitle ('Stramonita haemastoma')
+    geom_jitter(position=position_jitter(0.1), alpha=0.5, size=2.5, color="darkgray")+
+    geom_smooth() +
+    theme_pred +
+    labs(x = expression(paste(italic("Perna perna"), " occurrence")), 
+         y = "") +  #"Abundance (n)"
+         # y = expression(paste("Density (whelks 1.25",m^-2,")"))) +
+    scale_y_continuous(breaks = seq(0, 95, 15)) +
+    geom_errorbar(data=teste, width=0.1, aes(ymin = abund-conf.low, ymax = abund+conf.low, x = Pp_ok), colour="black") + 
+    geom_point(data=teste, size= 4, bg="black", shape=21, color="lightgray") +
+    ggtitle ('Stramonita haemastoma')
 
 
 #### tamanho_mm ~ Brach_cover
 ## Predicted values for effect of wave fetch
-str_brac <- read.csv("data/stramonita_size.txt", header=T, sep="\t") %>% 
-  ggplot(aes(Brach_cover, tamanho_mm)) + 
-  geom_smooth(method = 'lm', color = 'black') +
-  geom_smooth(data = read.csv("data/stramonita_size.txt", header=T, sep="\t") %>% 
-                glmmTMB(tamanho_mm ~ Brach_cover + (1|site), data= ., REML = TRUE) %>% 
-                ggpredict(., c("Brach_cover")) %>%
-                data.frame() %>% 
-                dplyr::rename(Brach_cover = x,
-                       tamanho_mm = predicted),
-              aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
-  geom_point(size= 2.2, alpha=0.3) + 
+# str_brac <- read.csv("data/stramonita_size.txt", header=T, sep="\t") %>% 
+#   ggplot(aes(Brach_cover, tamanho_mm)) + 
+#     geom_smooth(method = 'lm', color = 'black') +
+#     geom_smooth(data = read.csv("data/stramonita_size.txt", header=T, sep="\t") %>% 
+#                   glmmTMB(tamanho_mm ~ Brach_cover + (1|site), data= ., REML = TRUE) %>% 
+#                   ggpredict(., c("Brach_cover")) %>%
+#                   data.frame() %>% 
+#                   dplyr::rename(Brach_cover = x,
+#                          tamanho_mm = predicted),
+#                 aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
+#     geom_point(size= 2.2, alpha=0.3) + 
+#     theme_pred +
+#     labs(x = expression(paste(italic("Mytilaster solisianus"), " cover (%)")), 
+#          y = "Size (mm)") +
+#     scale_y_continuous(breaks = seq(0, 95, 15)) +
+#     ggtitle ('Stramonita haemastoma')
+
+stramonitaz <- stramonita %>% 
+  group_by(site, Brach_cover) %>% 
+  summarise(tamanho_mm = mean(tamanho_mm))
+
+str_brac <- glmmTMB(tamanho_mm ~ Brach_cover + (1|site), data= stramonitaz, REML = TRUE) %>%
+  ggpredict(., c("Brach_cover[all]"), type = c("fe")) %>%
+  data.frame() %>%
+  rename(Brach_cover = x) %>%
+  ggplot(aes(Brach_cover, predicted)) +
+  geom_smooth(aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
+  geom_point(data = stramonitaz, aes(y = tamanho_mm, x = Brach_cover), size= 2.2, alpha=0.4) +
   theme_pred +
   labs(x = expression(paste(italic("Mytilaster solisianus"), " cover (%)")), 
        y = "Size (mm)") +
-  scale_y_continuous(breaks = seq(0, 95, 15)) +
   ggtitle ('Stramonita haemastoma')
-
-
 
 ##################################
 ## LOTTIA #####
@@ -111,13 +126,13 @@ lot_sz_sst <- mgcv::gam(mean_size ~ s(sst_mean) + s(rugosity), data=lapas1) %>%
   data.frame() %>%
   rename(sst_mean = x) %>%
   ggplot(aes(sst_mean, predicted)) +
-  geom_smooth(aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
-  geom_point(data = lapas1, aes(y = mean_size, x = sst_mean), size= 2.2, alpha=0.4) +
-  theme_pred +
-  labs(x = expression(paste("Sea surface temperature (",degree,"C)")),
-       y = "Size (mm)") +
-  ggtitle ('Lottia subrugosa') +
-  scale_y_continuous(breaks = seq(0, 15, 5))
+    geom_smooth(aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
+    geom_point(data = lapas1, aes(y = mean_size, x = sst_mean), size= 2.2, alpha=0.4) +
+    theme_pred +
+    labs(x = expression(paste("Sea surface temperature (",degree,"C)")),
+         y = "Size (mm)") +
+    ggtitle ('Lottia subrugosa') +
+    scale_y_continuous(breaks = seq(0, 15, 5))
 
 ## mean_size ~ rugosity
 lot_sz_rug <- mgcv::gam(mean_size ~ s(sst_mean) + s(rugosity), data=lapas1) %>%
@@ -125,12 +140,12 @@ lot_sz_rug <- mgcv::gam(mean_size ~ s(sst_mean) + s(rugosity), data=lapas1) %>%
   data.frame() %>%
   rename(rugosity = x) %>%
   ggplot(aes(rugosity, predicted)) +
-  geom_smooth(aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
-  geom_point(data = lapas1, aes(y = mean_size, x = rugosity), size= 2.2, alpha=0.4) +
-  theme_pred +
-  labs(x = "Roughness", y = "") + #"Size (mm)"
-  ggtitle ('Lottia subrugosa') +
-  scale_y_continuous(breaks = seq(0, 15, 5))
+    geom_smooth(aes(ymin = conf.low, ymax = conf.high), stat = "identity", color = "black") +
+    geom_point(data = lapas1, aes(y = mean_size, x = rugosity), size= 2.2, alpha=0.4) +
+    theme_pred +
+    labs(x = "Roughness", y = "") + #"Size (mm)"
+    ggtitle ('Lottia subrugosa') +
+    scale_y_continuous(breaks = seq(0, 15, 5))
 
 ##########
 lapas <- read.table("data/lottia_ab.txt", header=T, sep="\t") ## Dataset without Leblon, C. Itaguá and Éden
@@ -142,12 +157,12 @@ lot_ab_chl <- lapas %>%
   summarise(adultos = mean(adultos),
             chl_mean = mean(chl_mean)) %>% 
   ggplot(aes(y = adultos, x = chl_mean)) +
-  geom_smooth(method = 'lm', formula = y ~ x, fill = "grey50", color = "black") +
-  geom_point(size= 2.2, alpha=0.4) +
-  theme_pred +
-  labs(x = expression(paste("Chlorophyll", italic(" a "), " (mg.", l^-1,")")), 
-       y = expression(paste("Density (ind.100",cm^-2,")"))) +
-  ggtitle ('Lottia subrugosa')
+    geom_smooth(method = 'lm', formula = y ~ x, fill = "grey50", color = "black") +
+    geom_point(size= 2.2, alpha=0.4) +
+    theme_pred +
+    labs(x = expression(paste("Chlorophyll", italic(" a "), " (", mu, "g.", m^-3,")")), 
+         y = expression(paste("Density (ind.100",cm^-2,")"))) +
+    ggtitle ('Lottia subrugosa')
 
 
 ## adultos ~ wf_log
@@ -156,12 +171,12 @@ lot_ab_wf <- lapas %>%
   summarise(adultos = mean(adultos),
             wf_log = mean(wf_log)) %>% 
   ggplot(aes(y = adultos, x = wf_log)) +
-  geom_smooth(method = 'lm', formula = y ~ x, fill = "grey50", color = "black") +
-  geom_point(size= 2.2, alpha=0.4) +
-  theme_pred +
-  labs(x = "log[wave fetch (km)]", 
-       y = "") + #expression(paste("Density (ind.100",cm^-2,")"))
-  ggtitle ('Lottia subrugosa')
+    geom_smooth(method = 'lm', formula = y ~ x, fill = "grey50", color = "black") +
+    geom_point(size= 2.2, alpha=0.4) +
+    theme_pred +
+    labs(x = expression(paste(log[10], "(number of cells)")), 
+         y = "") + 
+    ggtitle ('Lottia subrugosa')
 
 
 ##################################
@@ -184,14 +199,14 @@ lot_ab_wf <- lapas %>%
 nod_sz_lat <- read.csv("data/nodi_sz2020.csv", header=T) %>% 
   group_by(site) %>%
   summarise(tamanho_mm = mean(tamanho_mm)) %>%
-  left_join(abiot <- read.csv("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/data/abioticos_2020.csv", header = T)) %>%
+  left_join(abiot <- read.csv("data/abioticos_2020.csv", header = T)) %>%
   ggplot(aes(x = lat, y = tamanho_mm)) + 
     geom_smooth(method = 'lm', formula = y ~ x, fill = "grey50", color = "black") +
     geom_point(size= 2.2, alpha=0.4) +
     theme_classic() +
     theme_pred +
     scale_x_reverse() +
-    labs(x = "Latitude (degrees)", y = "Size (cm)") +
+    labs(x = "Latitude (degrees)", y = "Size (mm)") +
     ggtitle ('Echinolittorina lineolata')
 
 # read.csv("data/nodi_sz2020.csv", header=T) %>% 
@@ -362,7 +377,6 @@ rm(list = setdiff(ls(), c("theme_pred", "str_wf", "str_pp", "str_brac",
                           "tet_sz_fwd", "tet_pa_sst", "tet_ab_sst",
                           "lot_sz_sst", "lot_sz_rug", "nod_sz_lat")))
 
-library(patchwork)
 
 #### figure 6 ####
 (str_wf + str_pp) / (str_brac + nod_sz_lat) / (lot_sz_sst + lot_sz_rug) / (lot_ab_chl + lot_ab_wf)

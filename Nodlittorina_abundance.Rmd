@@ -29,7 +29,7 @@ source("functions/HighstatLibV6.r")
 
 ## Load data
 nodi <- read.table("data/nodi.txt", header=T, sep = "\t")
-nodi2 = nodi[nodi$abund < 1000,] ## dataframe excluding locations with more than 1,000 specimens##
+nodi2 <- nodi[nodi$abund < 1000,] ## dataframe excluding locations with more than 1,000 specimens##
 
 ##write.table(nodi, "nodi_abund.txt", sep = "\t")
 # # # # # # # # # # # # # # # # # # # # # # # #
