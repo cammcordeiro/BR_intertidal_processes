@@ -2,9 +2,9 @@ library(openxlsx)
 library(glmmTMB)
 library(insight)
 library(ggeffects)
+library(tidyverse)
 
-setwd("/Users/cesarcordeiro/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2019/Brazil_project")
-
+###
 source("functions/summarySE.r")
 
 source("functions/HighstatLibV6.r")
@@ -13,17 +13,27 @@ source("functions/plot_pca_sep.r")
 
 #### LOAD DATA
 
-abiot <- read.csv("/Users/cesarcordeiro/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/data/abioticos_2020.csv", header=T)
+abiot <- read.csv("data/abioticos_2020.csv", header=T)
 
 # ECHINOLITTORINA
-nodi_sz <- read.csv("data/nodi_sz2020.csv", header=T)
+nodi_sz <- read.csv("data/nodi_sz2020.csv", header=T, encoding = "UTF-8") %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(tamanho_mm = mean(tamanho_mm, na.rm = TRUE))
 # nodi_sz$subregion <- factor(nodi_sz$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
-nodi_ab <- read.delim("data/nodi.txt", header=T)
+nodi_ab <- read.delim("data/nodi.txt", header=T, encoding="UTF-8") %>% 
+  rename(site = X.U.FEFF.site) %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(abund = mean(abund, na.rm = TRUE))
 # nodi$subregion <- factor(nodi$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
 
 # TETRACLITA
-tetra_sz <- read.csv("data/tetra_sz2020.csv", header=T) 
-tetra_ab <- read.csv("data/tetra_ab2020.csv", header=T)
+tetra_sz <- read.csv("data/tetra_sz2020.csv", header=T, encoding="UTF-8") %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(tamanho_mm = mean(tamanho_mm, na.rm = TRUE))
+
+tetra_ab <- read.csv("data/tetra_ab2020.csv", header=T, encoding="UTF-8") %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(vivos_n  = mean(vivos_n, na.rm = TRUE))
 # tetra_sz$distance_S <- abiot$distance_S [ match(tetra_sz$site, abiot$site)] 
 # tetra_ab$distance_S <- abiot$distance_S [ match(tetra_ab$site, abiot$site)] 
 # tetra_ab$site <- factor(tetra_ab$site, levels = as.character(ordem$site))
@@ -32,23 +42,37 @@ tetra_ab$subregion <- factor(tetra_ab$subregion, levels = c("MRBS","SSCh","Ubatu
 tetra_sz$subregion <- factor(tetra_sz$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
 
 # LOTTIA
-lapas_sz <- read.csv("data/lottia_sz2020.csv", header=T)
-lapas_ab <- read.delim("data/lottia_ab.txt", header=T)
+lapas_sz <- read.csv("data/lottia_sz2020.csv", header=T, encoding="UTF-8") %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(tamanho_mm = mean(tamanho_mm, na.rm = TRUE))
+
+lapas_ab <- read.delim("data/lottia_ab.txt", header=T, encoding="UTF-8") %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(adultos = mean(adultos, na.rm = TRUE))
+
 # lapas_ab$subregion <- factor(lapas_ab$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
 # lapas_sz$subregion <- factor(lapas_sz$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
 
 # STRAMONITA
-stramonita_sz <- read.delim("data/stramonita_size.txt", header = T)
+stramonita_sz <- read.delim("data/stramonita_size.txt", header = T, encoding="UTF-8") %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(tamanho_mm = mean(tamanho_mm, na.rm = TRUE))
 # stramonita$subregion <- factor(stramonita$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
+
 stramonita_ab <- read.delim("data/stramonita_abundance.txt", header = T)
 
 # MYTILASTER
-brachi_sz <- read.csv("data/mytilaster_sz2020.csv", header=T) %>% 
-  filter(!is.na(tamanho_mm))
-brachi_cv <- read.csv("data/mytilaster_cv2020.csv", header = T)
+brachi_sz <- read.csv("data/mytilaster_sz2020.csv", header=T, encoding="UTF-8") %>% 
+  filter(!is.na(tamanho_mm)) %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(tamanho_mm = mean(tamanho_mm, na.rm = TRUE)) 
+
+brachi_cv <- read.csv("data/mytilaster_cv2020.csv", header = T, encoding="UTF-8") %>% 
+  group_by(site, subregion, region) %>% 
+  summarise(cover = mean(cover, na.rm = TRUE))
 # brachi_sz$subregion <- factor(brachi_sz$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
 # brachi_cv$subregion <- factor(brachi_cv$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
-brachi$cover <- brachi$rel_cover
+# brachi_cv$cover <- brachi_cv$rel_cover
 
 ##################################
 ## PLOT FUNCTIONS #####
@@ -224,14 +248,14 @@ stramonita_ab <- stramonita_sz %>%
 stramonita_var <- all_variance("tamanho_mm", "gaussian", stramonita_sz, "abund", "nbinom2", stramonita_ab, "stramonita")
 
 ### ECHINOLITTORINA
-echino_var <- all_variance("tamanho_mm", "gaussian", nodi_sz, "abund", "nbinom1", nodi_ab, "echinolittorina")
+echino_var <- all_variance("tamanho_mm", "gaussian", nodi_sz, "abund", "nbinom2", nodi_ab, "echinolittorina")
 
 
 ### JOIN OUTPUTS
 variancias <- bind_rows(echino_var, stramonita_var, mytilaster_var, lottia_var, tetra_var) %>% 
   mutate(variavel = plyr::mapvalues(variavel, from = c("abund", "tamanho_mm", "vivos_n"),
                                     to = c("density", "size", "density")),
-         fator = plyr::mapvalues(fator, from = c("cond.site:(subregion:region)", "cond.subregion:region", "cond.region", "var.residual"),
+         fator = plyr::mapvalues(fator, from = c("cond.site:subregion:region", "cond.subregion:region", "cond.region", "var.residual"),
                                  to = c("Site", "Subregion", "Region", "Within site")))
 
 ### PLOT VARIANCE PARTITIONING
@@ -242,6 +266,7 @@ variancias %>%
          spp = plyr::mapvalues(spp, from = c("stramonita", "lottia", "mytilaster", "echinolittorina", "tetra"),
                                to = c("Str hae", "Lot sub", "Myt sol", "Ech lin", "Tet sta")),
          spp = factor(spp, levels = c("Str hae", "Tet sta", "Myt sol", "Lot sub", "Ech lin"))) %>% 
+  filter(fator != "Within site") %>%
   ggplot(aes(x = variavel, y = variance, fill = fator, weight = variance)) + 
   geom_bar(stat="identity", position="fill", color='black') + 
   theme(panel.grid.major = element_blank(), 
