@@ -1,0 +1,449 @@
+---
+title: "Mytilaster.cover"
+author: "Cesar Cordeiro"
+date: "3/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Starting: loading packages and data
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+
+rm(list=ls())
+set.seed(13)
+
+# load packages
+library(lme4)
+library(bbmle)
+library(glmmTMB)
+library(tidyverse)
+library(nlme)
+library(DHARMa)
+library(lmerTest)
+library(nlme)
+library(lattice)
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(gridExtra)
+
+source("functions/HighstatLibV6.r")
+
+myt_cv <- read.csv("data/mytilaster_cv2020.csv", header = T) # Mytilaster strata
+
+ordem <- unique(myt_cv[order(myt_cv$distance_S),]['site'])
+myt_cv$site <- factor(myt_cv$site, levels = as.character(ordem$site))
+myt_cv$subregion <- factor(myt_cv$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
+
+# accounting for predators where they were found only outside sampled parcels
+myt_cv$str_ab[is.na(myt_cv$str_ab)] <- 0.01
+
+# adding missing values in cover due to lack of images - this is only to avoid unbalanced analysis using binomial data
+myt_cv %>% 
+  filter(site == "Astúrias") %>% 
+  dplyr::select(cover) %>% 
+  na.omit() %>% 
+  summary() # mean = 0.84
+
+which(is.na(myt_cv$cover) & myt_cv$site == "Astúrias")
+myt_cv[29:30, 3] <- 0.84
+
+#
+myt_cv %>% 
+  filter(site == "Forno (Arraial do Cabo)") %>% 
+  dplyr::select(cover) %>% 
+  na.omit() %>% 
+  summary() # mean = 0.73
+
+which(is.na(myt_cv$cover) & myt_cv$site == "Forno (Arraial do Cabo)")
+myt_cv[389:390, 3] <- 0.73
+
+rm(ordem)
+
+hist(myt_cv$cover)
+## ALPS comment: I believe we might need to run zero-inflated model; too many zeros. So we could separate which drivers predictes presence and absence and then the mussel cover itself ##
+
+## CAMMC comment: I've run a ZI model, but the ZI parameter in not significant. Using only presence and absence the model ends up as intercept only. Pattern in residuals on final model are probably due to spatial dependency since the lowest abundances and absences are associated with sites clustered between Ubatuba and SCRJ ##
+
+```
+
+#### Plotting for exploration
+```{r data exploration}
+
+ggplot(myt_cv, aes(x = site, y = cover, color = subregion)) + 
+  geom_boxplot(notch=F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+```
+
+#### VIF and correlations
+```{r VIF}
+
+myt_cv %>% 
+  na.omit() %>% 
+  dplyr::select(-region,-subregion,-site,-easting,-northing,-distance_S,-replica) %>% #, -ndvi, -distance_S, -ext_m_chth, -incl_graus_chth, -ext
+  corvif()
+
+myt_cv %>% 
+  dplyr::select(-region,-subregion,-site,-easting,-northing,-replica,-distance_S) %>%
+  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+## IMPORTANT: run this code on the console. For some reason, when it is ran here it does not show the VIF values ##
+
+# visual inspection
+myt_cv %>% 
+  dplyr::select(-region,-subregion,-easting,-northing,-distance_S,-replica) %>% 
+  group_by(site) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>% 
+  gather(key='fatores', value='valores', -site, -cover) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=cover)) + 
+  geom_smooth(aes(x= valores, y=cover)) + 
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+## Apparently effect of wave fetch, stramonita mean size and inclination ##
+```
+
+#### Checking data distribution
+```{r distribution, message=T, warning=T}
+
+dens.g = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|region/subregion/site), data=myt_cv, REML=T, family = gaussian, ziformula=~0)
+
+dens.b = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|region/subregion/site), data=myt_cv, REML=T, family = binomial, ziformula=~0)
+
+dens.g1 = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|region/subregion/site), data=myt_cv, REML=T, family = gaussian, ziformula=~1) # convergence problem - "continuous zero inflated models are a very particular case, although possible" (Ben Bolker - glmmFAQ website)
+
+dens.b1 = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|region/subregion/site), data=myt_cv, REML=T, family = binomial, ziformula=~1) # "binomial zero inflated models are rare, but possible" (Ben Bolker - glmmFAQ website)
+
+cand.set.dist <- list(dens.g,dens.b,dens.g1,dens.b1) 
+modnames.dist <- c("dens.g","dens.b","dens.g1","dens.b1") 
+AICctab(cand.set.dist, mnames= modnames.dist, base=TRUE, weights=TRUE, logLik=TRUE)
+
+summary(dens.b1)
+# Gaussian (model dens.g) had the best fit to data, followed by binomial. No zero inflation detected in binomial ZI
+```
+
+Error message from binomial models (In eval(family$initialize) : non-integer #successes in a binomial glm!) is not a problem apparently. Model fitting stills working in same way as if was binary (0 and 1).
+* https://stackoverflow.com/questions/12953045/warning-non-integer-successes-in-a-binomial-glm-survey-packages
+
+Usually it is recommended to apply logistic regression to percentage data, but there is overdispersion on residuals of those models. Gaussian fitted the data considerably better.
+
+
+#### Selecting random structure of predictive model
+```{r random}
+b.all = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|region/subregion/site), data=myt_cv) 
+
+b.no_reg = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|subregion/site), data=myt_cv)
+
+b.no_sub = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab +  (1|region/site), data=myt_cv)
+
+b.no_loc = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab +  (1|region/subregion), data=myt_cv)
+
+b.reg = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab +  (1|region), data=myt_cv)
+
+b.sub = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab +  (1|subregion), data=myt_cv)
+
+b.loc = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab +  (1|site), data=myt_cv)
+
+cand.set.dens3 <- list(b.all, b.no_reg, b.no_sub, b.no_loc, b.reg, b.sub, b.loc)
+modnames.dens3 <- c("b.all","b.no_reg","b.no_sub", "b.no_loc","b.reg", "b.sub", "b.loc")
+AICctab(cand.set.dens3, mnames= modnames.dens3, base=TRUE, weights=TRUE, logLik=TRUE)
+
+## CONCLUSION: Best random structure b.loc (site only) ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML)  
+```{r fixed, message=FALSE, warning=FALSE}
+dens.g.ML = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|site), data=myt_cv, REML=FALSE, family = binomial, ziformula=~0)
+summary(dens.g.ML)
+
+dens.g.ML1 <- update(dens.g.ML, .~.-chl_mean)
+summary(dens.g.ML1)
+
+dens.g.ML2 <- update(dens.g.ML1, .~.-str_ab)
+summary(dens.g.ML2)
+
+dens.g.ML3 <- update(dens.g.ML2, .~.-rugosity)
+summary(dens.g.ML3)
+
+dens.g.ML4 <- update(dens.g.ML3, .~.-sst_mean)
+summary(dens.g.ML4)
+
+dens.g.ML5 <- update(dens.g.ML4, .~.-inclinacao)
+summary(dens.g.ML5)
+
+anova(dens.g.ML4, dens.g.ML5)
+
+## CONCLUSION: simpler model includes: wave fetch (log), SST and inclinacao ##
+```
+
+#### Refit with REML and summary 
+
+The removal of *inclinacao* changes the model significantly, although near the magic p=0.05. As that variable is barely significant, and when the model is refitted to REML, it drops this variable. Finally, the model including *inclinacao* does not gain much on residuals fit. I believe is parsimonious to not include it in the final model.
+
+```{r REML}
+cover.REML = glmmTMB(cover ~ fwd_mean + wf_log + (1|site), data=myt_cv, REML=T, ziformula=~0)
+summary(cover.REML)
+```
+
+#### Checking model assumptions 
+```{r residuals}
+
+simulateResiduals(cover.REML) %>% plot() 
+simulateResiduals(cover.REML) %>% testDispersion()
+simulateResiduals(cover.REML) %>% testUniformity()
+# bad residuals using Dharma
+
+###
+
+myt_resid <- xyplot(resid(cover.REML, type="pearson") ~ fitted(cover.REML), 
+                  ylab="Pearson residuals", xlab="Fitted values", panel = function(x,y){
+                    panel.grid(h = -1, v = 2)
+                    panel.points(x, y, col = 1)
+                    panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+myt_sst <- xyplot(resid(cover.REML, type="pearson") ~ sst_mean, data=myt_cv, 
+                  ylab="Pearson residuals", xlab="SST mean", panel = function(x,y){
+                    panel.grid(h = -1, v = 2)
+                    panel.points(x, y, col = 1)
+                    panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+myt_fwd_mean <- xyplot(resid(cover.REML, type="pearson") ~ fwd_mean, data=myt_cv, 
+                  ylab="Pearson residuals", xlab="fwd mean", panel = function(x,y){
+                    panel.grid(h = -1, v = 2)
+                    panel.points(x, y, col = 1)
+                    panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+hist_res <- histogram(resid(cover.REML, type="pearson"), col="white", xlab=list(label="Pearson residuals"))
+
+Mytilaster.resid = grid.arrange(myt_resid, myt_sst, myt_fwd_mean, hist_res, ncol=2) 
+
+### plotting together ###
+plot(Mytilaster.resid)
+
+## CONCLUSION: residuals look fine for explaining variables, but with some bias in final model ##
+
+```
+
+
+#### Plotting to check spatial autocorrelation
+```{r check spatial}
+
+myt_cv1= as.data.frame(myt_cv)
+##create jitter (values a little different) because correlation term doesn't work when distance is 0 between replicates###
+myt_cv1$easting2 =  jitter(myt_cv1$easting)
+myt_cv1$northing2 = jitter(myt_cv1$northing)
+
+library(gstat)
+library(sp)
+library(ncf)
+
+## getting the residuals ##
+E <- residuals(cover.REML, type="pearson") 
+## creating dataframe with residuals and coordinates ##
+mydata <- data.frame(E, myt_cv1$easting, myt_cv1$northing) 
+## creating spatial object ##
+coordinates(mydata) <- c("myt_cv1.easting","myt_cv1.northing") 
+## plotting bubblemap with residuals ##
+bubble(mydata, "E", col = c("black","red"), alpha=0.1,
+       main = "Pearson Residuals", xlab = "Northing",
+       ylab = "Easting", scales = list(draw = T)) 
+
+vario1 <- variogram(E ~ 1, mydata)
+plot(vario1)
+
+spline.correlog(x = myt_cv1[, "easting"],
+    y = myt_cv1[, "northing"],
+    z = residuals(cover.REML, type = "pearson"), resamp=10) %>% 
+  plot(las=1, ylim = c(-0.2, 0.2))
+
+## CONCLUSION: Apparently, no evidence of spatial autocorrelation up to distance 100000 ##
+
+simulateResiduals(cover.REML) %>% 
+  testSpatialAutocorrelation(x = myt_cv1$easting2, y = myt_cv1$northing2, plot = T) 
+
+## spatial correlation using Dharma
+
+```
+
+### fitting PA model
+````{r PA}
+
+myt_cv <- myt_cv %>% 
+  mutate(PA = ifelse(cover > 0, 1, 0))
+
+dens.g.MLpa = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|site), data=myt_cv, REML=FALSE, family = binomial, ziformula=~0)
+summary(dens.g.MLpa)
+
+dens.g.MLpa1 <- update(dens.g.MLpa, .~.-rugosity)
+summary(dens.g.MLpa1)
+
+dens.g.MLpa2 <- update(dens.g.MLpa1, .~.-chl_mean)
+summary(dens.g.MLpa2)
+
+dens.g.MLpa3 <- update(dens.g.MLpa2, .~.-fwd_mean)
+summary(dens.g.MLpa3)
+
+dens.g.MLpa4 <- update(dens.g.MLpa3, .~.-sst_mean)
+summary(dens.g.MLpa4)
+
+dens.g.MLpa5 <- update(dens.g.MLpa4, .~.-str_ab-inclinacao-wf_log)
+summary(dens.g.MLpa5)
+
+### no significant variable
+
+```
+
+
+### fit model for cover > 0
+
+````{r coverOnly}
+
+# testing arcsin transformation
+myt_cv$coverT <- asin(sqrt(myt_cv$cover))
+
+dens.g.MLT = glmmTMB(coverT ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|site), data=myt_cv %>% filter(cover > 0), REML=FALSE, ziformula=~0)
+dens.g.ML = glmmTMB(cover ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + str_ab + (1|site), data=myt_cv %>% filter(cover > 0), REML=FALSE, ziformula=~0)
+AIC(dens.g.ML, dens.g.MLT) # transformation does not improove the model
+
+summary(dens.g.ML)
+
+dens.g.ML1 <- update(dens.g.ML, .~.-rugosity)
+summary(dens.g.ML1)
+
+dens.g.ML2 <- update(dens.g.ML1, .~.-wf_log)
+summary(dens.g.ML2)
+
+dens.g.ML3 <- update(dens.g.ML2, .~.-chl_mean-str_ab-inclinacao)
+summary(dens.g.ML3)
+
+### REML model
+coverOnly.REML = glmmTMB(cover ~ fwd_mean + sst_mean + (1|site), data=myt_cv %>% filter(cover > 0), REML=T, ziformula=~0)
+summary(coverOnly.REML)
+
+simulateResiduals(coverOnly.REML) %>% plot() 
+simulateResiduals(coverOnly.REML) %>% testDispersion()
+
+## bad residuals still
+
+````
+
+```{r reducedModel}
+
+## reducing number of samples to site level to decrease dispersion
+myt_agg <- left_join(myt_cv %>% select(-str_ab, -subregion) %>% aggregate(cover ~ site+region, ., mean),
+                    myt_cv %>% select(site, subregion, chl_mean:inclinacao, str_ab, easting, northing) %>% distinct())
+
+## check relationship shape
+xyplot(myt_agg$cover ~ myt_agg$sst_mean,type=c("p", "smooth"), pch=21, cex=1.2, col="black", fill=c("light blue")) # sigmoid-like shape
+xyplot(myt_agg$cover ~ myt_agg$fwd_mean,type=c("p", "smooth"), pch=21, cex=1.2, col="black", fill=c("light blue"))
+
+### check linear and GAM models
+lm_lp = lm(cover ~ wf_log + fwd_mean, data=myt_agg)
+glm_b = glm(cover  ~ wf_log + fwd_mean, data=myt_agg, family = binomial)
+gam_b = gam(cover ~ wf_log + fwd_mean, data=myt_agg, family = binomial)
+gam_g = gam(cover ~ wf_log + fwd_mean, data=myt_agg)
+scam_b = scam::scam(cover ~ s(wf_log) + s(fwd_mean), data=myt_agg, family = binomial)
+scam_l = scam::scam(cover ~ s(wf_log) + s(fwd_mean), data=myt_agg)
+scam_lp1 = scam::scam(cover ~ s(wf_log) + s(fwd_mean, bs="mpi"), data=myt_agg) # spline following pattern from plot
+
+mods <- list(lm_lp, glm_b, gam_b, gam_g, scam_b, scam_lp1, scam_l)
+modsnames <- c("lm_lp","glm_b","gam_b", "gam_g","scam_b", "scam_lp1", "scam_l")
+AICctab(mods, mnames= modsnames, base=TRUE, weights=TRUE, logLik=TRUE)
+
+summary(scam_lp1) # best model
+gam.check(scam_lp1)
+plot(scam_lp1, pages=1)
+
+# remove spline from wf_log
+scam_lp = scam::scam(cover ~ wf_log + s(fwd_mean, bs="mpi"), data=myt_agg)
+
+AIC(scam_lp1, scam_lp) # slightly better AIC
+
+summary(scam_lp) 
+plot(scam_lp, pages=1)
+
+# check assumptions
+simulateResiduals(scam_lp) %>% plot() # OK
+simulateResiduals(scam_lp) %>% testDispersion() # OK
+simulateResiduals(scam_lp) %>% testUniformity() # OK
+simulateResiduals(scam_lp) %>% 
+  testSpatialAutocorrelation(x = myt_agg$easting, y = myt_agg$northing, plot = T) # OK
+
+```
+
+#### Residuals
+```{r}
+
+mgcv::gam.check(scam_lp)
+
+xyplot(resid(scam_lp, type="pearson") ~ fwd_mean, data=myt_agg, 
+            ylab="Pearson residuals", xlab="Freshwater index", panel = function(x,y){
+              panel.grid(h = -1, v = 2)
+              panel.points(x, y, col = 1)
+              panel.loess(x, y, span=0.5, col = 1, lwd=2)})
+
+xyplot(resid(scam_lp, type="pearson") ~ wf_log, data=myt_agg, 
+            ylab="Pearson residuals", xlab="log(wave fetch)", panel = function(x,y){
+              panel.grid(h = -1, v = 2)
+              panel.points(x, y, col = 1)
+              panel.loess(x, y, span=0.5, col = 1, lwd=2)})
+
+```
+
+#### Predictions of best model
+```{r predictions}
+library(ggeffects)
+library(ggplot2)
+library(ggpubr)
+
+# Wave fetch
+myt_cv_wf <- predict(scam_lp, se=T) %>% # check if this is the right way to predict values
+  data.frame() %>% 
+  mutate(wf_log = myt_agg$wf_log) %>% 
+  ggplot(aes(y = fit, x = wf_log)) + 
+    geom_smooth(method = 'lm', color = "black") +
+    geom_point(data = myt_agg, aes(y = cover, x = wf_log), alpha = 0.4) + 
+    theme_classic() + 
+  theme(axis.text.x = element_text(size=12, color="black"), 
+        axis.text.y = element_text(size=12, color="black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=16),
+        axis.ticks = element_line(colour = "black", size = 0.8),
+        axis.line = element_line(colour = 'black', size = 0.8),
+        axis.ticks.length = unit(4, "pt"),
+        strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10),
+        plot.title = element_text(face = "bold.italic", size = 10)) +
+    labs(x = "log[wave fetch (km)]", y = "Cover (%)") +
+    ggtitle ('Mytilaster solisianus') + 
+    ylim(0,1)
+
+    
+# Freshwater
+myt_cv_fwd <- predict(scam_lp, se=T) %>%
+  data.frame() %>% 
+  mutate(fwd_mean = myt_agg$fwd_mean) %>% 
+  ggplot(aes(y = fit, x = fwd_mean)) + 
+  geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cr"), color = "black") +
+  geom_point(data = myt_agg, aes(y = cover, x = fwd_mean), alpha = 0.4) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(size=12, color="black"), 
+        axis.text.y = element_text(size=12, color="black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=16),
+        axis.ticks = element_line(colour = "black", size = 0.8),
+        axis.line = element_line(colour = 'black', size = 0.8),
+        axis.ticks.length = unit(4, "pt"),
+        strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10),
+        plot.title = element_text(face = "bold.italic", size = 10)) +
+  labs(x = "Freshwater index", y = "Cover (%)") +
+  ggtitle ('Mytilaster solisianus') +
+  ylim(0,1)
+
+
+
+#ggsave("Myt_preds.tiff", dpi = 600, compression = 'lzw')
+```
+

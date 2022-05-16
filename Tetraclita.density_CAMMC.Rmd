@@ -1,0 +1,416 @@
+---
+title: "Tetraclita.density"
+author: "Cesar Cordeiro"
+date: "3/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+#### Starting: loading packages and data
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+
+rm(list=ls())
+set.seed(13)
+
+# load packages
+library(lme4)
+library(bbmle)
+library(glmmTMB)
+library(tidyverse)
+library(nlme)
+library(DHARMa)
+library(lmerTest)
+library(nlme)
+library(lattice)
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(gridExtra)
+
+# source("script/HighstatLibV6.r")
+
+
+tetra_ab <- read.csv("data/tetra_ab2020.csv", header=T)
+summary(tetra_ab)
+
+ordem <- unique(tetra_ab[order(tetra_ab$distance_S),]['site'])
+tetra_ab$site <- factor(tetra_ab$site, levels = as.character(ordem$site))
+tetra_ab$subregion <- factor(tetra_ab$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
+tetra_ab$str_ab[is.na(tetra_ab$str_ab)] <- 0.01
+
+tetra_ab <- tetra_ab %>% 
+  mutate(PA = ifelse(vivos_n == 0, 0, 1))
+
+tetra_p <- tetra_ab %>% 
+  filter(vivos_n > 0)
+
+rm(ordem)
+
+hist(tetra_ab$vivos_n) # Right skewed distribution and zero inflated
+```
+
+
+#### Plotting for exploration
+```{r data exploration}
+
+ggplot(tetra_ab, aes(x = site, y = vivos_n, color = subregion)) + 
+  geom_boxplot(notch=F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+
+```
+
+#### VIF and correlations
+```{r VIF}
+
+tetra_ab %>% 
+  na.omit() %>% 
+  dplyr::select(-region,-subregion,-replicate,-site,-easting,-northing, -distance_S, -inclinacao) %>% 
+  corvif()
+
+tetra_ab %>% 
+  dplyr::select(-region,-subregion,-site, -replicate, -easting,-northing, -distance_S, -inclinacao) %>% 
+  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+
+# visual inspection
+tetra_ab %>% 
+  dplyr::select(-region,-subregion,-replicate,-easting,-northing, -distance_S, -inclinacao, -PA) %>% 
+  group_by(site) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>% 
+  gather(key='fatores', value='valores', -site, -vivos_n) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=vivos_n)) + 
+  geom_smooth(aes(x= valores, y=vivos_n)) + 
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+
+```
+
+#### Selecting random structure of presence predictive model
+```{r distribution PA}
+
+pa.g.full = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|region/subregion/site), data=tetra_ab, REML=T, family = binomial, ziformula=~0) ## random = region, subregion and site ##
+
+pa.g.no_loc = glmmTMB(PA ~  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|region/subregion), data=tetra_ab, REML=T, family = binomial, ziformula=~0) ## random = region and subregion ##
+
+pa.g.no_sub = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|region/site), data=tetra_ab, REML=T, family = binomial, ziformula=~0) ## random = region and site ##
+
+pa.g.no_reg = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|subregion/site), data=tetra_ab, REML=T, family = binomial, ziformula=~0) ## random = subregion and site ##
+
+pa.g.reg = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|region), data=tetra_ab, REML=T, family = binomial, ziformula=~0) ## random = only region ##
+
+pa.g.sub = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|subregion), data=tetra_ab, REML=T, family = binomial, ziformula=~0) ## random = only subregion ##
+
+pa.g.loc = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|site), data=tetra_ab, REML=T, family = binomial, ziformula=~0) ## random = only site ##
+
+pa.none = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab, data=tetra_ab, REML=T, family = binomial, ziformula=~0) ## random = none ##
+
+cand.set.pa3 <- list(pa.g.full, pa.g.no_reg, pa.g.no_sub, pa.g.no_loc, pa.g.reg, pa.g.sub, pa.g.loc, pa.none)
+modnames.pa3 <- c("pa.g.full","pa.g.no_reg","pa.g.no_sub", "pa.g.no_loc","pa.g.reg", "pa.g.sub", "pa.g.loc", "pa.none")
+AICctab(cand.set.pa3, mnames= modnames.pa3, base=TRUE, weights=TRUE, logLik=TRUE)
+
+# site level is the best
+
+```
+
+#### Selecting fixed structure of PA model (method = ML)  
+```{r fixed PA}
+
+n0.ML = glmmTMB(PA ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + 
+                  str_ab + (1|site), data=tetra_ab, 
+                REML= FALSE, family=binomial)
+summary(n0.ML)
+
+n0.ML2 <- update(n0.ML, .~.-fwd_mean)
+summary(n0.ML2)
+
+n0.ML3 <- update(n0.ML2, .~.-str_ab)
+summary(n0.ML3)
+
+n0.ML4 <- update(n0.ML3, .~.-rugosity)
+summary(n0.ML4)
+
+n0.ML5 <- update(n0.ML4, .~.-incl_graus_tetra)
+summary(n0.ML5)
+
+n0.ML6 <- update(n0.ML5, .~.-wf_log)
+summary(n0.ML6)
+
+n0.ML7 <- update(n0.ML6, .~.-chl_mean)
+summary(n0.ML7)
+
+```
+
+
+#### Refit with REML and summary 
+```{r refit PA}
+
+rm(list=setdiff(ls(), c("tetra_ab", "tetra_p")))
+
+pa.b.REML = glmmTMB(PA ~ sst_mean + (1|site), data=tetra_ab, REML=T, family = binomial)
+
+summary(pa.b.REML)
+
+```
+
+#### Checking model assumptions 
+```{r PA REML}
+
+simulateResiduals(pa.b.REML) %>% plot() 
+simulateResiduals(pa.b.REML) %>% testDispersion()
+simulateResiduals(pa.b.REML) %>% testUniformity()
+simulateResiduals(pa.b.REML) %>% plotResiduals(tetra_ab$sst_mean) # some deviation in lower quantile
+
+## check spatial autocorrelation
+tetra_ab$easting2  = jitter(tetra_ab$easting)
+tetra_ab$northing2 = jitter(tetra_ab$northing)
+
+simulateResiduals(pa.b.REML) %>% 
+  testSpatialAutocorrelation(x = tetra_ab$easting2, y = tetra_ab$northing2, plot = T) 
+# spatial autocorrelation detected
+
+# test again grouping residuals per site (https://www.rdocumentation.org/packages/DHARMa/versions/0.4.1/topics/testSpatialAutocorrelation)
+
+# calculate simulated residuals per site 
+coords <- tetra_ab %>% 
+  select(site, easting, northing) %>%
+  distinct()
+
+simulateResiduals(pa.b.REML) %>% 
+  recalculateResiduals(group = tetra_ab$site) %>% 
+  testSpatialAutocorrelation(x = coords$easting, y = coords$northing, plot = T)
+
+# no spatial autocorrelation at site level
+
+```
+
+
+
+#### Checking presence data distribution
+```{r distribution presence}
+
+dens.nb1 = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + 
+                     str_ab + (1|region/subregion/site), data=tetra_p, REML=T, family = nbinom1)
+
+dens.nb2 = glmmTMB(vivos_n ~  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + 
+                     str_ab + (1|region/subregion/site), data=tetra_p, REML=T, family = nbinom2)
+
+dens.p =   glmmTMB(vivos_n ~  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + 
+                     str_ab + (1|region/subregion/site), data=tetra_p, REML=T, family = poisson)
+
+dens.g =   glmmTMB(vivos_n ~  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + 
+                     str_ab + (1|region/subregion/site), data=tetra_p, REML=T, family = gaussian)
+
+dens.gm =   glmmTMB(vivos_n ~  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + 
+                     str_ab + (1|region/subregion/site), data=tetra_p, REML=T, family = Gamma)
+
+cand.set.dist <- list(dens.nb1, dens.nb2, dens.p, dens.g, dens.gm) ## list of models unedr comparison ##
+modnames.dist <- c("dens.nb1","dens.nb2","dens.p", "dens.g", "dens.gm") ## naming different moels ##
+AICctab(cand.set.dist, mnames= modnames.dist, base=TRUE, weights=TRUE, logLik=TRUE) ## AICc tab from package bbmle ##
+
+## CONCLUSION: nbinom1 = best distribution ##
+```
+
+
+#### Selecting random structure of presence predictive model
+```{r random}
+
+dens.g.full = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|region/subregion/site), data=tetra_p, REML=T, family = nbinom1, ziformula=~0) ## random = region, subregion and site ##
+
+dens.g.no_loc = glmmTMB(vivos_n ~  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|region/subregion), data=tetra_p, REML=T, family = nbinom1, ziformula=~0) ## random = region and subregion ##
+
+dens.g.no_sub = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|region/site), data=tetra_p, REML=T, family = nbinom1, ziformula=~0) ## random = region and site ##
+
+dens.g.no_reg = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|subregion/site), data=tetra_p, REML=T, family = nbinom1, ziformula=~0) ## random = subregion and site ##
+
+dens.g.reg = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|region), data=tetra_p, REML=T, family = nbinom1, ziformula=~0) ## random = only region ##
+
+dens.g.sub = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|subregion), data=tetra_p, REML=T, family = nbinom1, ziformula=~0) ## random = only subregion ##
+
+dens.g.loc = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab + (1|site), data=tetra_p, REML=T, family = nbinom1, ziformula=~0) ## random = only site ##
+
+dens.none = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + str_ab, data=tetra_p, REML=T, family = nbinom1, ziformula=~0) ## random = none ##
+
+cand.set.dens3 <- list(dens.g.full, dens.g.no_reg, dens.g.no_sub, dens.g.no_loc, dens.g.reg, dens.g.sub, dens.g.loc, dens.none)
+modnames.dens3 <- c("dens.g.full","dens.g.no_reg","dens.g.no_sub", "dens.g.no_loc","dens.g.reg", "dens.g.sub", "dens.g.loc", "dens.none")
+AICctab(cand.set.dens3, mnames= modnames.dens3, base=TRUE, weights=TRUE, logLik=TRUE)
+
+## CONCLUSION: Best random structure dens.g.loc (only site) ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML)  
+```{r fixed presence}
+
+dens.g.ML = glmmTMB(vivos_n ~ sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + 
+                      str_ab + (1|site), data=tetra_p, REML=FALSE, family = nbinom1, ziformula=~0)
+summary(dens.g.ML)
+
+dens.g.ML1 <- update(dens.g.ML, .~.-str_ab)
+summary(dens.g.ML1)
+
+dens.g.ML2 <- update(dens.g.ML1, .~.-chl_mean)
+summary(dens.g.ML2)
+
+dens.g.ML3 <- update(dens.g.ML2, .~.-fwd_mean)
+summary(dens.g.ML3)
+
+dens.g.ML4 <- update(dens.g.ML3, .~.-rugosity)
+summary(dens.g.ML4)
+
+dens.g.ML5 <- update(dens.g.ML4, .~.-incl_graus_tetra)
+summary(dens.g.ML5)
+
+dens.g.ML6 <- update(dens.g.ML5, .~.-wf_log)
+summary(dens.g.ML6)
+
+## CONCLUSION: selected model includes: only SST ##
+```
+
+#### Refit with REML and summary 
+```{r REML}
+
+rm(list=setdiff(ls(), c("tetra_ab", "tetra_p", "coords")))
+
+dens.nb1.REML = glmmTMB(vivos_n ~ sst_mean + (1|site), data=tetra_p, REML=T, family = nbinom1, ziformula=~0)
+summary(dens.nb1.REML)
+
+## dispersion parameter
+# https://github.com/glmmTMB/glmmTMB/issues/224
+dispfun <- function(m) {
+  r <- residuals(m, type="pearson")
+  n <- df.residual(m)
+  dsq <- sum(r^2)
+  c(dsq = dsq, n = n, disp = dsq/n)
+}
+
+dispfun(dens.nb1.REML) #OK
+
+```
+
+#### Checking model assumptions 
+```{r residuals}
+
+simulateResiduals(dens.nb1.REML) %>% plot() ## quantiles show deviation 
+simulateResiduals(dens.nb1.REML) %>% testOutliers()   ## OK 
+simulateResiduals(dens.nb1.REML) %>% testDispersion() ## OK
+simulateResiduals(dens.nb1.REML) %>% testUniformity() ## OK
+simulateResiduals(dens.nb1.REML) %>% plotResiduals(tetra_p$sst_mean, xlab = "SST mean", ylab = "scaled residuals")
+simulateResiduals(dens.nb1.REML) %>% hist()
+
+## CONCLUSION: simulated residuals look fine ##
+
+### checking residuals against all variables
+tetra_p %>% 
+  filter(!is.na(vivos_n)) %>% 
+  dplyr::select(site, chl_mean, sst_mean, fwd_mean, wf_log, rugosity, inclinacao, str_ab, str_size, vivos_n) %>% 
+  pivot_longer(names_to = 'fatores', values_to ='valores', cols=chl_mean:str_size) %>% 
+  aggregate(.~site+fatores, FUN=mean, data=.) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=vivos_n)) + 
+  geom_smooth(aes(x= valores, y=vivos_n)) +
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+
+```
+
+#### Plotting to check spatial autocorrelation
+```{r check spatial}
+
+## Creating jittered values for coordinates since testing spatial autocorrelation in DHARMa only works for unique values ##
+tetra_p$easting2  = jitter(tetra_p$easting)
+tetra_p$northing2 = jitter(tetra_p$northing)
+
+simulateResiduals(dens.nb1.REML) %>% testSpatialAutocorrelation(x = tetra_p$easting2, y = tetra_p$northing2, plot = T) 
+# evidence of spatial autocorrelation
+
+# calculate simulated residuals per site 
+simulateResiduals(dens.nb1.REML) %>% 
+  recalculateResiduals(group = tetra_p$site) %>% 
+  testSpatialAutocorrelation(x = coords$easting, y = coords$northing, plot = T)
+
+## no spatial correlation at the site level ##
+
+```
+
+
+#### Fitting spatial models
+```{r spatial model}
+
+# INLA models were ambiguous
+
+```
+
+
+#### Fitting GAM models
+
+```{r gam}
+
+library(mgcv)
+library(scam)
+
+## reducing number of samples to site level to decrease dispersion
+tetra1 <- left_join(tetra_ab %>% select(-str_ab, -replicate, -subregion) %>% aggregate(vivos_n~site+region, ., mean),
+                    tetra_ab %>% select(-str_ab, -replicate, -subregion) %>% aggregate(cbind(sst_mean, easting, northing, fwd_mean)~site+region, ., mean))
+
+## check relationship shape
+xyplot(tetra1$vivos_n ~ tetra1$sst_mean,type=c("p", "smooth"), pch=21, cex=1.2, col="black", fill=c("light blue")) # sigmoid-like shape
+
+# comparing GAM with bs spline and SCAM with constrained shape (sigmoid)
+gam_lp = gam(vivos_n ~ s(sst_mean), data=tetra1)
+scam_lp = scam::scam(vivos_n ~ s(sst_mean, bs="mpd"), data=tetra1)
+
+summary(gam_lp)
+summary(scam_lp)
+
+gam.check(gam_lp)
+gam.check(scam_lp)
+
+plot(gam_lp, las=1)
+plot(scam_lp, las=1)
+
+AIC(scam_lp, gam_lp) # SCAM had lower AIC
+
+
+simulateResiduals(scam_lp) %>% plot() ## OK
+simulateResiduals(scam_lp) %>% testDispersion() ## OK
+simulateResiduals(scam_lp) %>% testUniformity() ## OK
+simulateResiduals(scam_lp) %>% plotResiduals(tetra1$sst_mean, xlab = "SST mean", ylab = "scaled residuals") ## some deviance in lower quantile
+
+## check spatial autocorrelation
+simulateResiduals(scam_lp) %>% 
+  testSpatialAutocorrelation(x = tetra1$easting, y = tetra1$northing, plot = T) 
+# no autocorrelation
+
+```
+
+
+#### Predictions of best model
+```{r predictions}
+
+## sst_mean
+
+sst_pred <- predict(scam_lp, se=T) %>% # check if this is the right way to predict values
+  data.frame() %>% 
+  mutate(sst_mean = tetra1$sst_mean) %>% 
+  ggplot(aes(x = sst_mean, y = fit)) +
+    geom_point(size= 2.2, alpha=0.5) + 
+    geom_ribbon(aes(y = NULL, ymin = fit-se.fit, ymax = fit+se.fit), fill = "grey50", alpha=0.5)+
+    geom_line(mapping = aes(x = sst_mean, y = fit), size = 1.3, color="black") +
+    theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+                            axis.text.y = element_text(size=12, color="black"),
+                            axis.title.x = element_text(color="black", size=14),
+                            axis.title.y = element_text(color="black", size=16)) +
+    labs(x = expression(paste("SST (",~degree~C,")")), 
+         y = expression(paste("Density ", "(", ind.100cm^-2, ")"))) +
+    theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+    theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+    theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+    theme(axis.ticks.length = unit(4, "pt"), legend.position = "")
+
+ggsave("sst_pred.tiff", dpi = 600, compression = 'lzw')
+
+```

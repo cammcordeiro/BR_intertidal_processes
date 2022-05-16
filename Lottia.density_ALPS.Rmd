@@ -1,0 +1,253 @@
+---
+title: "Lot.ab_ALPS"
+author: "ALPS"
+date: "27 de março de 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+#### Starting: loading packages and data
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+rm(list=ls())
+set.seed(13)
+
+library(glmmTMB)
+library(bbmle)
+library(MASS)
+library(lattice)
+library(tidyverse)
+library(dplyr)
+library(DHARMa)
+
+source("functions/HighstatLibV6.r")## Codes for calculationg VIF ##
+
+lapas <- read.table("data/lottia_ab.txt", header=T, sep="\t") ## Dataset without Leblon, C. Itaguá and Éden
+lapas <- droplevels(subset(lapas, !is.na(adultos))) ##removing NA's according to 'adultos' column#
+
+summary(lapas)
+
+hist(lapas$adultos) ## negative binomial distribution: 13% of zeros ##
+```
+
+
+#### VIF and correlations
+```{r VIF}
+lapas %>% 
+  na.omit() %>% 
+  dplyr::select(chl_mean, sst_mean, fwd_mean, wf_log, rugosity, incl_graus_tetra, ndvi) %>% 
+  corvif()
+
+lapas %>% 
+  dplyr::select(chl_mean, sst_mean, fwd_mean, wf_log, rugosity, ext_m_tetra, incl_graus_tetra, ndvi) %>% 
+  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+
+# visual inspection
+lapas %>% 
+  dplyr::select(site, adultos, chl_mean, sst_mean, fwd_mean, wf_log, rugosity, ext_m_tetra, incl_graus_tetra, ndvi) %>% 
+  #group_by(site) %>% 
+  #summarise_if(is.numeric, mean, na.rm = TRUE) %>% 
+  gather(key='fatores', value='valores', -site, -adultos) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=adultos)) + 
+  geom_smooth(aes(x= valores, y=adultos)) + 
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+```
+
+#### Checking data distribution
+```{r distribution, message=FALSE, warning=FALSE}
+dens.nb1 = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + 
+                     (1|region/subregion/site), data=lapas, REML=T, family = nbinom1, ziformula=~0)
+dens.nb2 = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + 
+                     (1|region/subregion/site), data=lapas, REML=T, family = nbinom2, ziformula=~0)
+dens.p =   glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + 
+                     (1|region/subregion/site), data=lapas, REML=T, family = poisson, ziformula=~0)
+dens.g =   glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + 
+                     (1|region/subregion/site), data=lapas, REML=T, family = gaussian, ziformula=~0)
+
+cand.set.dist <- list(dens.nb1, dens.nb2, dens.p, dens.g) 
+modnames.dist <- c("dens.nb1","dens.nb2","dens.p", "dens.g") 
+AICctab(cand.set.dist, mnames= modnames.dist, base=TRUE, weights=TRUE, logLik=TRUE)
+
+## CONCLUSION: nbinom1 = best distribution ##
+```
+
+#### Selecting random structure of predictive model
+```{r random, message=FALSE, warning=FALSE}
+dens.nb1.no_reg = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + (1|subregion/site), data=lapas, REML=T, family = nbinom1)## random = subregion and site ##
+
+dens.nb1.no_sub = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + (1|region/site), data=lapas, REML=T, family = nbinom1)## random = region and site ##
+
+dens.nb1.no_loc = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + (1|region/subregion), data=lapas, REML=T, family = nbinom1)## random = region and subregion ##
+
+dens.nb1.reg = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + (1|region), data=lapas, REML=T, family = nbinom1)## random = only region ##
+
+dens.nb1.sub = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + (1|subregion), data=lapas, REML=T, family = nbinom1)## random = only subregion ##
+
+dens.nb1.loc = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + incl_graus_tetra + (1|site), data=lapas, REML=T, family = nbinom1)## random = only site ##
+
+## verifying fit of models with different random structures ##
+cand.set.dens <- list(dens.nb1, dens.nb1.no_reg, dens.nb1.no_sub, dens.nb1.no_loc, dens.nb1.reg, dens.nb1.sub, dens.nb1.loc)
+modnames.dens <- c("dens.nb1","dens.nb1.no_reg","dens.nb1.no_sub", "dens.nb1.no_loc","dens.nb1.reg", "dens.nb1.sub", "dens.nb1.loc")
+AICctab(cand.set.dens, mnames= modnames.dens, base=TRUE, weights=TRUE, logLik=TRUE)
+## CONCLUSION: Best model dens.nb1.loc (only site as random term) ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML) 
+```{r fixed}
+dens.nb1.ML = glmmTMB(adultos ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log  + rugosity + 
+                      incl_graus_tetra + (1|site), data=lapas, REML=F, family = nbinom1) ## Note: REML = FALSE ##
+summary(dens.nb1.ML)
+
+dens.nb2.ML <- update(dens.nb1.ML, .~.-sst_mean)
+summary(dens.nb2.ML)
+
+dens.nb3.ML <- update(dens.nb2.ML, .~.-wf_log)
+summary(dens.nb3.ML)
+
+dens.nb4.ML <- update(dens.nb3.ML, .~.-rugosity)
+summary(dens.nb4.ML)
+
+dens.nb5.ML <- update(dens.nb4.ML, .~.-ndvi) 
+summary(dens.nb5.ML)
+
+dens.nb6.ML <- update(dens.nb5.ML, .~.-fwd_mean)
+summary(dens.nb6.ML)
+
+anova(dens.nb5.ML, dens.nb6.ML)
+
+## CONCLUSION dens.nb5.ML is the model with all significant predictors (effect of Chla, fwd and inclination) ##
+```
+
+#### Refit with REML and summary 
+```{r REML}
+dens.nb.REML = glmmTMB(adultos ~ chl_mean + fwd_mean + incl_graus_tetra +
+                         (1|site), data=lapas, REML=T, family = nbinom1)
+
+summary(dens.nb.REML)
+```
+
+#### Checking model assumptions with DHARMa
+```{r residuals}
+sim1 = simulateResiduals(dens.nb.REML) ## create simulated residuals for negative binomail GLMM ##
+plot(sim1) ## qqplot and simulated std residulals vs. simulated predicted values ##
+
+testOutliers(sim1)   ## Testig for outliers: Okay ##
+testDispersion(sim1) ## Testing dispersion: Okay ##
+testUniformity(sim1) ## qqplot again: Okay ##
+
+par(mfrow = c(2,2))
+plotResiduals(lapas$chl_mean, sim1$scaledResiduals, xlab = "Chla mean", ylab = "scaled residuals")
+plotResiduals(lapas$fwd_mean, sim1$scaledResiduals, xlab = "fwd mean", ylab = "scaled residuals")
+plotResiduals(lapas$incl_graus_tetra, sim1$scaledResiduals, xlab = "inclination", ylab = "scaled residuals")
+hist(sim1$fittedResiduals)
+
+## CONCLUSION: simulated residuals are fine ##
+```
+
+#### Testing for spatial autocorrelation
+```{r check spatial}
+## First, I created jittered values for coordinates since testing spatial autocorrelation in DHARMa only works for unique values ##
+
+lapas$easting2  = jitter(lapas$easting)
+lapas$northing2 = jitter(lapas$northing)
+
+testSpatialAutocorrelation(sim1, x = lapas$easting2, y = lapas$northing2, plot = T) 
+
+## CONCLUSION: evidence of spatial autocorrelation ##
+```
+
+#### Fitting spatial models (to do)
+```{r spatial model}
+
+```
+
+#### Predictions of best model
+```{r predictions}
+library(ggeffects)
+library(ggplot2)
+library(ggpubr)
+
+# chl_mean
+lot.chl = ggpredict(dens.nb.REML, c("chl_mean[all]"), type = c("fe"))  ## extract predicted regression and 95% CI ##
+names(lot.chl) = c("chl_mean", "predicted", "sd", "low", "high", "n") ## renaming columns (names must match with dataframe 'lapas') ##
+
+chl_pred <- ggplot(lapas, aes(chl_mean, adultos)) + 
+  geom_point(size= 2.2, alpha=0.3) + 
+  #geom_point(size= 2.2, alpha=0.8, aes(color=subregion)) + 
+  geom_ribbon(data = lot.chl, aes(y = NULL, ymin = low, ymax = high), fill = "grey50", alpha=0.5)+
+  geom_line(data = lot.chl, mapping = aes(x = chl_mean, y = predicted), size = 1.3, color="black") +
+  theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+        axis.text.y = element_text(size=12, color="black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=16)) +
+  labs(x = expression(paste("Chlorophyll-a (",mg.m^-3,")")), 
+       y = expression(paste("Density ", "(", ind.100cm^-2, ")"))) +
+  theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+  scale_y_continuous(breaks = seq(0, 16, 2.0)) +
+  theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+  theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+  theme(axis.ticks.length = unit(4, "pt"), legend.position = "")
+
+# fwd_mean
+lot.fwd = ggpredict(dens.nb.REML, c("fwd_mean[all]"), type = c("fe"))
+names(lot.fwd) = c("fwd_mean", "predicted", "sd", "low", "high", "n")
+
+fwd_pred <- ggplot(lapas, aes(fwd_mean, adultos)) + 
+  geom_point(size= 2.2, alpha=0.3) + 
+  #geom_point(size= 2.2, alpha=0.8, aes(color=subregion)) + 
+  geom_ribbon(data = lot.fwd, aes(y = NULL, ymin = low, ymax = high), fill = "grey50", alpha=0.5)+
+  geom_line(data = lot.fwd, mapping = aes(x = fwd_mean, y = predicted), size = 1.3, color="black") +
+  theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+        axis.text.y = element_text(size=12, color="black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=16)) +
+  labs(x = expression(paste("fwd index")), 
+       y = expression(paste("Density ", "(", ind.100cm^-2, ")"))) +
+  theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+  scale_y_continuous(breaks = seq(0, 16, 2)) +
+  theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+  theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+  theme(axis.ticks.length = unit(4, "pt"), legend.position = "")
+
+# inclination on lower mesolittoral 
+lot.incl = ggpredict(dens.nb.REML, c("incl_graus_tetra[all]"), type = c("fe"))
+names(lot.incl) = c("incl_graus_tetra", "predicted", "sd", "low", "high", "n")
+
+incl_pred <- ggplot(lapas, aes(incl_graus_tetra, adultos)) + 
+  geom_point(size= 2.2, alpha=0.3) + 
+  #geom_point(size= 2.2, alpha=0.8, aes(color=subregion)) + 
+  geom_ribbon(data = lot.incl, aes(y = NULL, ymin = low, ymax = high), fill = "grey50", alpha=0.5)+
+  geom_line(data = lot.incl, mapping = aes(x = incl_graus_tetra, y = predicted), size = 1.3, color="black") +
+  theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+        axis.text.y = element_text(size=12, color="black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=16)) +
+  labs(x = expression(paste("inclination (degress)")), 
+       y = expression(paste("Density ", "(", ind.100cm^-2, ")"))) +
+  theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+  scale_y_continuous(breaks = seq(0, 16, 2)) +
+  theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+  theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+  theme(axis.ticks.length = unit(4, "pt"), legend.position = "")
+
+Lot_preds = ggarrange(chl_pred, fwd_pred, incl_pred, ncol = 2, nrow = 2, align = "hv")## arranging plots together ##
+Lot_preds
+ggsave("Lot_preds.tiff", dpi = 600, compression = 'lzw')
+```
+
+
+
+
+
+
+
+
+
+
+

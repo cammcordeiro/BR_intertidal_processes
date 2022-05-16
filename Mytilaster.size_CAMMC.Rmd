@@ -1,0 +1,345 @@
+---
+title: "Mytilaster.size"
+author: "Cesar Cordeiro"
+date: "3/31/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Starting: loading packages and data
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+
+rm(list=ls())
+set.seed(13)
+
+# load packages
+library(lme4)
+library(bbmle)
+library(glmmTMB)
+library(tidyverse)
+library(nlme)
+library(DHARMa)
+library(lmerTest)
+library(nlme)
+library(lattice)
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(gridExtra)
+
+# source("script/HighstatLibV6.r")
+
+myt_size1 <- read.csv("data/mytilaster_sz2020.csv", header=T)
+ordem <- unique(myt_size1[order(myt_size1$distance_S),]['site'])
+myt_size1$site <- factor(myt_size1$site, levels = as.character(ordem$site))
+myt_size1$subregion <- factor(myt_size1$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
+
+# accounting for predators where they were found only outside sampled parcels
+myt_size1$str_ab[is.na(myt_size1$str_ab)] <- 0.01
+
+myt_size <- myt_size1 %>% na.omit() %>% droplevels()
+
+rm(ordem, myt_size1)
+```
+
+#### Plotting for exploration
+```{r data exploration}
+hist(myt_size$tamanho_mm)
+
+
+ggplot(myt_size, aes(tamanho_mm)) +
+  geom_density(aes(fill=site), alpha=0.5) +
+  facet_grid(subregion~., drop = TRUE) +
+  theme_classic() +
+  theme(legend.position = "")
+
+ggplot(myt_size, aes(x = site, y = tamanho_mm, color = subregion)) + 
+  geom_boxplot(notch=T) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x="", "Size (mm)")
+```
+
+#### VIF and correlations
+```{r VIF}
+
+myt_size %>% 
+  na.omit() %>% 
+  dplyr::select(-region,-subregion,-site,-easting,-northing, -distance_S) %>% 
+  corvif()
+
+myt_size %>% 
+  dplyr::select(-region,-subregion,-site, -easting, -northing, -distance_S) %>% 
+  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+
+# visual inspection
+myt_size %>% 
+  dplyr::select(-region,-subregion, -easting, -northing, -distance_S) %>% 
+  group_by(site) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>% 
+  gather(key='fatores', value='valores', -site, -tamanho_mm) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=tamanho_mm)) + 
+  geom_smooth(aes(x= valores, y=tamanho_mm)) + 
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+```
+
+#### Selecting random structure of predictive model
+```{r random, Distribution, message=T, warning=T}
+size.m.full = lmer(tamanho_mm ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + 
+                     str_size + str_ab + (1|region/subregion/site), data=myt_size, REML=T)
+size.m.no_reg = lmer(tamanho_mm ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + 
+                       str_size + str_ab + (1|subregion/site), data=myt_size, REML=T)
+size.m.no_sub = lmer(tamanho_mm ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + 
+                       str_size + str_ab + (1|region/site), data=myt_size, REML=T)
+size.m.no_loc = lmer(tamanho_mm ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + 
+                       str_size + str_ab + (1|region/subregion), data=myt_size, REML=T)
+size.m.reg = lmer(tamanho_mm ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + 
+                    str_size + str_ab + (1|region), data=myt_size, REML=T)
+size.m.sub = lmer(tamanho_mm ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + 
+                    str_size + str_ab + (1|subregion), data=myt_size, REML=T)
+size.m.loc = lmer(tamanho_mm ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + 
+                    str_size + str_ab + (1|site), data=myt_size, REML=T)
+
+cand.set.m <- list(size.m.full, size.m.no_reg, size.m.no_sub, size.m.no_loc, size.m.reg, size.m.sub, size.m.loc)
+modnames.m <- c("size.m.full","size.m.no_reg","size.m.no_sub", "size.m.no_loc","size.m.reg", "size.m.sub", "size.m.loc")
+AICctab(cand.set.m, mnames=modnames.m, base=TRUE, weights=TRUE, logLik=TRUE)
+
+anova(size.m.loc, size.m.no_sub) ## no difference between size.m.loc, size.m.no_sub, model size.m1.no_reg is simpler, and the first have singular when fitted with REML=F ##
+
+## CONCLUSION: Most parsimonious random structure size.m.loc (site only) ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML)  
+```{r fixed, message=TRUE, warning=TRUE}
+
+size.m.ML = lmer(tamanho_mm ~ sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + 
+                   str_size + str_ab + (1|site), data=myt_size, REML=FALSE)
+summary(size.m.ML)
+
+size.m.ML1 <- update(size.m.ML, .~. -wf_log)
+summary(size.m.ML1)
+
+size.m.ML2 <- update(size.m.ML1, .~. -str_size)
+summary(size.m.ML2)
+
+size.m.ML3 <- update(size.m.ML2, .~. -fwd_mean)
+summary(size.m.ML3)
+
+size.m.ML4 <- update(size.m.ML3, .~. -rugosity)
+summary(size.m.ML4)
+
+size.m.ML5 <- update(size.m.ML4, .~. -inclinacao)
+summary(size.m.ML5)
+
+size.m.ML6 <- update(size.m.ML5, .~. -str_ab)
+summary(size.m.ML6)
+
+size.m.ML7 <- update(size.m.ML6, .~. -chl_mean)
+summary(size.m.ML7)
+
+## CONCLUSION: Best model includes only SST (size.m.ML7) ##
+```
+
+#### Refit with REML and summary 
+```{r REML}
+
+size.m.REML = lmer(tamanho_mm ~ sst_mean + (1|site), data = myt_size, REML= TRUE)
+summary(size.m.REML)
+```
+
+#### Checking model assumptions 
+```{r residuals}
+
+myt_s_res <- xyplot(resid(size.m.REML, type="pearson")~fitted(size.m.REML), 
+               ylab="Pearson residuals", xlab="Fitted values", panel = function(x,y){
+                 panel.grid(h = -1, v = 2)
+                 panel.points(x, y, col = 1)
+                 panel.loess(x, y, span = 0.5, col = 1,lwd=2)})## Plot residuals ~ fitted values with smoother##
+
+sst_s_res <- xyplot(resid(size.m.REML, type="pearson")~sst_mean, data=myt_size, 
+                   ylab="Pearson residuals", xlab="mean SST", panel = function(x,y){
+                     panel.grid(h = -1, v = 2)
+                     panel.points(x, y, col = 1)
+                     panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+hist_res <- histogram(resid(size.m.REML, type="pearson"), col="white", xlab=list(label="Pearson residuals"))
+
+Mytilaster.resid = grid.arrange(myt_s_res, sst_s_res, hist_res, ncol=3) ### plotting together ###
+plot(Mytilaster.resid)
+## CONCLUSION: residuals look fine ##
+## ALPS comment: not sure about pearson residuals vs. fitted values ##
+
+### checking residuals against all variables
+myt_size %>% 
+  dplyr::select(site, chl_mean, sst_mean, fwd_mean, wf_log, rugosity, inclinacao, str_ab, str_size, tamanho_mm) %>% 
+  pivot_longer(names_to = 'fatores', values_to ='valores', cols=chl_mean:str_size) %>% 
+  bind_cols(resid=rep(resid(size.m.REML, type="pearson"), 8)) %>%
+  aggregate(.~site+fatores, FUN=mean, data=.) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=resid)) + 
+  geom_smooth(aes(x= valores, y=resid)) +
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+
+```
+
+#### Plotting to check spatial autocorrelation
+```{r check spatial}
+##create jitter (values a little different) because correlation term doesn't work when distance is 0 between replicates###
+myt_size$easting2 = jitter(myt_size$easting) 
+myt_size$northing2 = jitter(myt_size$northing)
+
+library(gstat)
+library(sp)
+library(ncf)
+
+## getting the residuals ##
+E <- residuals(size.m.REML, type="pearson") 
+## creating dataframe with residuals and coordinates ##
+mydata <- data.frame(E, myt_size$easting, myt_size$northing) 
+## creating spatial object ##
+coordinates(mydata) <- c("myt_size.easting","myt_size.northing") 
+## plotting bubblemap with residuals ##
+bubble(mydata, "E", col = c("black","red"), alpha=0.1,
+       main = "Pearson Residuals", xlab = "Northing",
+       ylab = "Easting", scales = list(draw = T)) 
+
+vario1 <- variogram(E ~ 1, mydata)
+plot(vario1)
+
+## CONCLUSION: Maybe negligible spatial dependency detected ## lag = ~5000
+```
+
+#### Fitting spatial models (need to check)
+```{r spatial model}
+
+env.REML = lme(tamanho_mm ~ sst_mean, random = ~1|site, data=myt_size, method="REML")
+
+env.gau = lme(tamanho_mm ~  sst_mean, random=~ 1|site, data=myt_size, method="REML",
+              correlation = corGaus(form = ~easting2+northing2, nugget = TRUE))
+env.sph = lme(tamanho_mm ~ sst_mean, random=~ 1|site, data=myt_size, method="REML",
+              correlation = corSpher(form = ~easting2+northing2, nugget = TRUE))
+env.lin = lme(tamanho_mm ~ sst_mean, random=~ 1|site, data=myt_size, method="REML",
+              correlation = corLin(form = ~easting2+northing2, nugget = TRUE))
+env.ratio = lme(tamanho_mm ~ sst_mean, random=~ 1|site, data=myt_size, method="REML",
+                correlation = corRatio(form = ~easting2+northing2, nugget = TRUE))
+env.exp = lme(tamanho_mm ~ sst_mean, random=~ 1|site, data=myt_size, method="REML",
+              correlation = corExp(form = ~easting2+northing2, nugget = TRUE))
+
+cand.set.env2 <- list(env.REML, env.gau, env.ratio, env.exp, env.sph, env.lin)
+modnames.env2<-c("env.REML","env.gau", "env.ratio", "env.exp", "env.sph", "env.lin")
+AICctab(cand.set.env2, mnames=modnames.env2, base=TRUE, weights=TRUE, logLik=TRUE)
+
+anova(env.exp, env.REML)
+# Spatial structure did not enhance model
+```
+
+#### Predictions of best linear model
+```{r predictions}
+library(ggeffects)
+library(ggplot2)
+library(ggpubr)
+
+# sst_mean
+myt_sst = ggpredict(env.REML, c("sst_mean[all]"), type = c("fe"))
+names(myt_sst) <- c("sst_mean", "predicted", "sd", "low", "high", "n")
+
+sst_pred <- ggplot(myt_size, aes(sst_mean, tamanho_mm)) + 
+  geom_point(size= 2.2, alpha=0.3) + 
+  geom_ribbon(data = myt_sst, aes(y = NULL, ymin = low, ymax = high), fill = "grey50", alpha=0.5) +
+  geom_line(data = myt_sst, mapping = aes(x = sst_mean, y = predicted), size = 1.3, color="black") +
+  theme_classic() + 
+  theme(axis.text.x = element_text(size=12, color="black"), 
+        axis.text.y = element_text(size=12, color="black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=16),
+        strip.text.x = element_text(size = 10), 
+        strip.text.y = element_text(size = 10),
+        axis.ticks = element_line(colour = "black", size = 0.8),
+        axis.line = element_line(colour = 'black', size = 0.8),
+        axis.ticks.length = unit(4, "pt")) +
+  labs(x = "Freshwater index", y = "Mytilaster size (mm)")
+
+sst_pred
+
+ggsave("Myt_size_preds.tiff", dpi = 600, compression = 'lzw')
+```
+
+
+```{r GAM}
+
+newdata<-aggregate(.~site+region+subregion+northing+northing, FUN=mean, data=myt_size)
+df <- newdata[order(newdata$site),]
+df$id<-seq(1,nrow(df),1)
+
+df$logsize<-log(df$tamanho_mm)
+df$mlogsize<-df$logsize-mean(df$logsize) # center the response
+df$msst<-df$sst_mean-mean(df$sst_mean) # center the predictor
+
+#An example of a plot in lattice
+xyplot(df$logsize~df$msst,type=c("p", "smooth"), pch=21, cex=1.2, col="black", fill=c("light blue"))
+xyplot(df$tamanho_mm ~ df$sst_mean, type=c("p", "smooth"), pch=21, cex=1.2, col="black", fill=c("light blue"))
+
+library(scam)
+m2<-scam(tamanho_mm~s(msst, bs="mpd"), data=df)
+m3<-scam(mlogsize~s(msst, bs="mpd"), data=df)
+m4<-scam(tamanho_mm~s(sst_mean, bs="mpd"), data=df)
+summary(m4) 
+AIC(m2,m3,m4)
+# adjust using log(size) or centered variables is similar, better keep it simple
+
+######
+
+# residuals seem ok
+
+# check assumptions
+simulateResiduals(m4) %>% plot() # OK
+simulateResiduals(m4) %>% testDispersion() # OK
+simulateResiduals(m4) %>% testUniformity() # OK
+simulateResiduals(m4) %>% 
+  testSpatialAutocorrelation(x = df$easting, y = df$northing, plot = T) # OK
+
+#####
+# library(sp)
+# E <- residuals(m3, type="pearson") 
+# 
+# ## creating dataframe with residuals and coordinates ##
+# mydata <- data.frame(E, df$sst_mean, df$easting, df$northing) 
+# ## creating spatial object ##
+# coordinates(mydata) <- c("df.easting","df.northing") 
+# ## plotting bubblemap with residuals ##
+# bubble(mydata, "E", col = c("black","red"), alpha=0.1,
+#        main = "Pearson Residuals", xlab = "Northing",
+#        ylab = "Easting", scales = list(draw = T)) 
+# 
+# gstat::variogram(E ~ 1, mydata) %>% plot()
+
+# it stills hold some spatial dependence, but negligible
+
+```
+
+#### Residuals
+```{r}
+
+mgcv::gam.check(m4)
+
+# xyplot(resid(m4, type="pearson") ~ fitted(m4), 
+#        ylab="Pearson residuals", xlab="Fitted values", panel = function(x,y){
+#          panel.grid(h = -1, v = 2)
+#          panel.points(x, y, col = 1)
+#          panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+xyplot(resid(m4, type="pearson") ~ sst_mean, data=df, 
+            ylab="Pearson residuals", xlab="Sea surface temperature (C)", panel = function(x,y){
+              panel.grid(h = -1, v = 2)
+              panel.points(x, y, col = 1)
+              panel.loess(x, y, span=0.5, col = 1, lwd=2)})
+
+
+```

@@ -1,0 +1,208 @@
+---
+title: "Nodilittorina.abundance_ALPS"
+author: "ALPS"
+date: "31 de março de 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### Starting: loading packages and data
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+# clear memory
+rm(list=ls())
+set.seed(13)
+
+# load packages
+library(glmmTMB)
+library(tidyverse)
+library(mgcv)
+library(ggpubr)
+library(sp)
+library(gstat)
+library(ncf)
+
+source("functions/HighstatLibV6.r")
+
+## Load data
+nodi <- read.table("data/nodi.txt", header=T, sep = "\t")
+nodi2 = nodi[nodi$abund < 1000,] ## dataframe excluding locations with more than 1,000 specimens##
+
+##write.table(nodi, "nodi_abund.txt", sep = "\t")
+# # # # # # # # # # # # # # # # # # # # # # # #
+
+hist(nodi$abund)
+nodi$abund %>% shapiro.test()
+
+hist(nodi2$abund)
+
+hist(log(nodi2$abund))
+log(nodi2$abund) %>% shapiro.test()
+## Use log-tranformation. Close enough to a normal distribution ##
+
+```
+
+####  VIF and correlations
+```{r VIF}
+nodi2 %>% 
+  na.omit() %>% 
+  dplyr::select(-region, -subregion, -site, -easting, -northing, -abund, -tamanho_mm) %>% 
+  corvif()
+
+nodi2 %>% 
+  dplyr::select(-region, -subregion, -site, -easting, -northing, -tamanho_mm) %>% 
+  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+
+# visual inspection
+nodi2 %>% 
+  dplyr::select(-region, -subregion, -tamanho_mm) %>% 
+  gather(key='fatores', value='valores', -site, -abund) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=abund)) + 
+  geom_smooth(aes(x= valores, y=abund)) + 
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+```
+
+#### Selecting distribution type of predictive model
+```{r dist}
+ndp = glmmTMB(abund ~ ndvi_sup_diff + chl_mean + sst_mean + incl_graus_chth +
+                        fwd_mean + wf_log + rugosity, data=nodi2, REML=T, family = poisson)
+
+ndnb = glmmTMB(abund ~ ndvi_sup_diff + chl_mean + sst_mean + incl_graus_chth +
+                fwd_mean + wf_log + rugosity, data=nodi2, REML=T, family = nbinom1(link="log"))
+
+ndnb1 = glmmTMB(abund ~ ndvi_sup_diff + chl_mean + sst_mean + incl_graus_chth +
+                fwd_mean + wf_log + rugosity, data=nodi2, REML=T, family = nbinom2(link="log"))
+
+cand.set.dist <- list(ndp, ndnb, ndnb1) 
+modnames.dist <- c("ndp", "ndnb", "ndnb1") 
+AICctab(cand.set.dist, mnames= modnames.dist, base=TRUE, weights=TRUE, logLik=TRUE)
+```
+
+#### Selecting random structure of predictive model
+```{r random}
+n0 = glmmTMB(abund ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + rugosity  + incl_graus_chth, data=nodi2, REML= T, family = nbinom2(link="log"))
+
+n1 = glmmTMB(abund ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + rugosity  + incl_graus_chth + (1|region/subregion), data=nodi2, REML=T, family = nbinom2(link="log"))
+
+n2 = glmmTMB(abund ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + rugosity  + incl_graus_chth + (1|region), data=nodi2, REML=T, family = nbinom2(link="log"))
+
+n3 = glmmTMB(abund ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + rugosity  + incl_graus_chth + (1|subregion), data=nodi2, REML=T, family = nbinom2(link="log"))
+
+cand.set.n <- list(n0, n1, n2, n3)
+modnames.n <- c("n0", "n1","n2", "n3")
+AICctab(cand.set.n, mnames= modnames.n, base=TRUE, weights=TRUE, logLik=TRUE)
+
+lmtest::lrtest(n0,n2) ## no difference; best model n0 (lower AICc and simpler) ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML)
+```{r fixed}
+n0.ML = glmmTMB(abund ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + rugosity  + incl_graus_chth, data=nodi2, REML= FALSE, family = nbinom2(link="log"))
+summary(n0.ML)
+
+n0.ML2 <- update(n0.ML, .~.-wf_log)
+summary(n0.ML2)
+
+n0.ML3 <- update(n0.ML2, .~.-incl_graus_chth)
+summary(n0.ML3)
+
+n0.ML4 <- update(n0.ML3, .~.-sst_mean)
+summary(n0.ML4)
+
+n0.ML5 <- update(n0.ML4, .~.-chl_mean)
+summary(n0.ML5)
+
+n0.ML6 <- update(n0.ML5, .~.-rugosity)
+summary(n0.ML6)
+
+n0.ML7 <- update(n0.ML6, .~.-fwd_mean)
+summary(n0.ML7)
+
+n0.ML8 <- update(n0.ML7, .~.-ndvi_sup_diff)
+summary(n0.ML8)
+
+## CONCLUSION: none of environmental variable predicted Nodilittorina abundance ##
+```
+
+#### Selecting best intercept only model with or without random structure
+```{r intercept only}
+n0.reml = gls(log(abund) ~ 1, data=nodi2, method = "REML", na.action = na.omit)
+
+n0.rs = lmer(log(abund) ~ 1 + (1|region/subregion), data=nodi2, REML= TRUE)## singular fit##
+
+n0.r = lmer(log(abund) ~ 1 + (1|region), data=nodi2, REML= TRUE)## singular fit##
+
+n0.s = lmer(log(abund) ~ 1 + (1|subregion), data=nodi2, REML= TRUE)## singular fit##
+
+cand.set.n2 <- list(n0.reml, n0.rs, n0.r, n0.s)
+modnames.n2 <- c("n0.reml", "n0.rs", "n0.r", "n0.s")
+AICctab(cand.set.n2, mnames= modnames.n2, base=TRUE, weights=TRUE, logLik=TRUE)
+
+## CONCLUSION: best model does not have random structure
+
+histogram(resid(n0.reml, type="pearson"), col="white", xlab=list(label="Pearson residuals"))
+plot(n0.reml)
+
+## some plots
+nodi2 %>% 
+  ggplot(aes(x=subregion, y=abund)) +
+  geom_boxplot(width = 0.5) +
+  geom_jitter(alpha=0.5, width = 0.2, aes(color=region)) +
+  theme_classic()
+## no pattern by subregion ##
+
+nodi2 %>% 
+  ggplot(aes(x=region, y=abund)) +
+  geom_boxplot(width = 0.5) +
+  geom_jitter(alpha=0.5, width = 0.2, aes(color=region)) +
+  theme_classic()
+## no pattern by region neither ##
+
+nodi2 %>% 
+  ggplot(aes(x=northing, y=abund)) +
+  geom_jitter(alpha=0.5, width = 0.2, aes(color=subregion)) +
+  theme_classic()
+## no spatial pattern as well ##
+```
+
+```{r gam}
+nd.gl.gam.all = gam(abund ~ s(ndvi_sup_diff) + s(chl_mean) + s(sst_mean) + 
+                      s(fwd_mean) + s(wf_log) + s(rugosity), data=nodi2, REML=T, family = nb())
+summary(nd.gl.gam.all)
+
+nd.gl.gam1 <- update(nd.gl.gam.all, .~.-s(wf_log))
+summary(nd.gl.gam1)
+
+nd.gl.gam2 <- update(nd.gl.gam1, .~.-s(sst_mean))
+summary(nd.gl.gam2)
+
+nd.gl.gam3 <- update(nd.gl.gam2, .~.-s(chl_mean))
+summary(nd.gl.gam3)
+
+nd.gl.gam4 <- update(nd.gl.gam3, .~.-s(ndvi_sup_diff))
+summary(nd.gl.gam4)
+
+nd.gl.gam5 <- update(nd.gl.gam4, .~.-s(rugosity))
+summary(nd.gl.gam5)
+
+nd.gl.gam6 <- update(nd.gl.gam5, .~.-s(fwd_mean))
+summary(nd.gl.gam6)
+
+gam.check(nd.gl.gam6)
+plot.gam(nd.gl.gam6, pages=1)
+
+nd.gl.gam.coord = gam(abund ~ te(easting, northing) + s(ndvi_sup_diff), data=nodi2, family = nb())
+summary(nd.gl.gam.coord)
+nd.gl.gam.coord1 <- update(nd.gl.gam.coord, .~.-s(ndvi_sup_diff))
+summary(nd.gl.gam.coord1)
+
+plot(nd.gl.gam.coord1)
+
+### NO PATTERN ###
+
+```

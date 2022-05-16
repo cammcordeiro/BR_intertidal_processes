@@ -1,0 +1,268 @@
+---
+title: "Stramonita.abundance"
+author: "ALPS"
+date: "30 de março de 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Starting: loading packages and data
+```{r}
+# clear memory
+
+rm(list=ls())
+set.seed(13)
+
+# # # # # # # # # # # # # # # # # # # # # # # # 
+# Models testing # STRAMONITA ABUNDANCE
+# # # # # # # # # # # # # # # # # # # # # # # #
+
+library(lme4)
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(gridExtra)
+library(mgcv)
+
+source("functions/HighstatLibV6.r")
+# # # # # # # # # # # # # # # # # # # # # # # #
+
+# load data #
+str_ab <- read.csv("data/stramonita_abundance.txt", header=T, sep="\t") 
+
+###############
+hist(str_ab$abund) # binomial negative distribution: use ***raw data*** #
+shapiro.test(str_ab$abund)
+
+hist(log(1+str_ab$abund))
+shapiro.test(log(1+str_ab$abund)) ## not good ##
+```
+
+#### VIF and correlations
+```{r}
+# VIF and correlations
+str_ab %>% 
+  dplyr::select(-region, - subregion, -site, -easting, - northing,
+         -pp_cat,-wf_log, -abund, -distance_km, -city, -lat, -long) %>% 
+  corvif()
+
+str_ab %>% 
+  dplyr::select(-region, - subregion, -easting, - northing, -pp_cat, -wf_log, -distance_km, -city, -lat, -long) %>% 
+  gather(key='fatores', value='valores', -abund, -site) %>% 
+  ggplot() + 
+  geom_point(aes(y= abund, x=valores)) + 
+  geom_smooth(aes(y= abund, x=valores)) +
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+
+str_ab %>% 
+  dplyr::select(-region, -subregion, -site, -easting, - northing, -site2, -perna_PA, -pp_cat,-wf_log, -abund_errado, -distance_km, -city, -lat, -long) %>%
+  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+```
+
+#### Checking best distribution
+```{r}
+## ALPS: For this reponse there is no variation at **site** level ##
+
+dens2.nb1 = glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + 
+                      Pp_ok + Tetr_size + Brach_cover + Tetr_density +
+                      Brach_size, data=str_ab, REML=T, family = nbinom1(link="log"))
+
+dens2.nb2 = glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + 
+                      Pp_ok + Tetr_size + Brach_cover + Tetr_density +
+                      Brach_size, data=str_ab, REML=T, family = nbinom2(link="log"))
+
+dens2.p =   glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + 
+                      Pp_ok + Tetr_size + Brach_cover + Tetr_density +
+                      Brach_size, data=str_ab, REML=T, family = poisson)
+
+##dens2.g =   glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + perna_PA + Tetr_size + Brach_cover + Tetr_density + Brach_size + (1|region/subregion), data=str_ab2, REML=T, family = gaussian, ziformula=~0)
+
+cand.set.dist <- list(dens2.p, dens2.nb1, dens2.nb2) 
+modnames.dist <- c("dens2.p", "dens2.nb1", "dens2.nb2") 
+bbmle::AICctab(cand.set.dist, mnames= modnames.dist, base=TRUE, weights=TRUE, logLik=TRUE)
+
+## CONCLUSION: nbinom2 is the best distribution ##
+```
+
+#### Selecting random structure of predictive model
+```{r}
+m.full = glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + 
+                         Pp_ok + Tetr_size + Brach_cover + Tetr_density + Brach_size, 
+                         data=str_ab, REML=T, family = nbinom2(link="log"))# no random effect ##
+
+m.full.rs = glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + 
+                         Pp_ok + Tetr_size + Brach_cover + Tetr_density +
+                         Brach_size + (1|region/subregion), data=str_ab, REML=T, family =                                   nbinom2(link="log"))## subregion nested in region ##
+
+m.full.reg = glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + 
+                          Pp_ok + Tetr_size + Brach_cover + Tetr_density +
+                          Brach_size + (1|region), data=str_ab, REML=T, family =                                            nbinom2(link="log"))## only region ##
+
+m.full.sub = glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + 
+                          Pp_ok + Tetr_size + Brach_cover + Tetr_density +
+                          Brach_size + (1|subregion), data=str_ab, REML=T, family =                                          nbinom2(link="log"))## only subregion ##
+
+cand.set1 <- list(m.full, m.full.rs, m.full.reg, m.full.sub)
+modnames.set1 <- c("m.full", "m.full.rs", "m.full.reg", "m.full.sub")
+bbmle::AICctab(cand.set1, mnames= modnames.set1, base=TRUE, weights=TRUE, logLik=TRUE)
+
+## CONCLUSION: best model WITHOUT random structure: m.full ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML)  
+```{r}
+m.full.1 = glmmTMB(abund ~ chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + 
+                     Pp_ok + Tetr_size + Brach_cover + Tetr_density + Brach_size, 
+                   data=str_ab, REML=FALSE, family = nbinom2(link="log"))
+summary(m.full.1)
+
+m.red1 <- update(m.full.1, .~.-inclinacao)## removing inclinacao ##
+summary(m.red1)
+
+m.red2 <- update(m.red1, .~.-Brach_cover)## removing Brach_cover ##
+summary(m.red2)
+
+m.red3 <- update(m.red2, .~.-Tetr_size)## removing Tetr_size ##
+summary(m.red3)
+
+m.red4 <- update(m.red3, .~.-Brach_size)## removing Tetr_density ##
+summary(m.red4)
+
+m.red5 <- update(m.red4, .~.-Tetr_density)## removing Brach_size ##
+summary(m.red5)
+
+m.red6 <- update(m.red5, .~.-sst_mean)## removing sst_mean ##
+summary(m.red6)
+
+m.red7 <- update(m.red6, .~.-fwd_mean)## removing fwd_mean ##
+summary(m.red7)
+
+m.red8 <- update(m.red7, .~.-chl_mean)## removing chl_mean ##
+summary(m.red8)
+
+m.red9 <- update(m.red8, .~.-rugosity)## removing rugosity ##
+summary(m.red9)## 
+
+## CONCLUSION: FINAL MODEL: wave fetch and P/A of Perna perna ####
+```
+
+#### Refit with REML and summary
+```{r}
+m.red9.REML = glmmTMB(abund ~ wf_log + Pp_ok, data=str_ab, REML=T, family = nbinom2)
+
+summary(m.red9.REML)
+```
+
+#### Checking model assumptions
+```{r}
+
+sim1 = simulateResiduals (m.red9.REML) ## To get simulated residuals from the model ##
+plot (sim1) ## fitted values vs. std residuals and qqplot: not bad ##
+
+testOutliers(sim1)## Testig for outliers: Okay ##
+
+testDispersion(sim1)## Testing dispersion: Okay ##
+
+testUniformity(sim1)## qplot again ##
+
+######### ploting standardised residuals vs. selected predictors (wave fetch e Perna perna occurence) ####
+par(mfrow = c(1, 2))
+plotResiduals(str_ab$wf_log, sim1$scaledResiduals, xlab = "wave fetch (km)", ylab = "scaled residuals")
+plotResiduals(str_ab$Pp_ok, sim1$scaledResiduals, asfactor = T, xlab = "Perna perna (P/A)", ylab = "scaled residuals")
+```
+
+#### Checking model assumptions 
+```{r}
+ra1 = xyplot(resid(m.red9.REML, type="pearson")~fitted(m.red9.REML), 
+       ylab="Pearson residuals", xlab="Fitted values", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, span=0.5, col = 1, lwd=2)})## Plot residuals ~ fitted values with smoother##
+
+ra2 = xyplot(resid(m.red9.REML, type="pearson") ~ wf_log, data=str_ab, 
+       ylab="Pearson residuals", xlab="log(Wave fetch)", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, span=0.5, col = 1, lwd=2)})## Plot residuals ~ fitted values with smoother##
+
+ra3 = xyplot(resid(m.red9.REML, type="pearson") ~ Pp_ok, data=str_ab, 
+       ylab="Pearson residuals", xlab="Perna perna presence", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, span=0.5, col = 1, lwd=2)})
+
+ra4 = histogram(resid(m.red9.REML, type="pearson"), col="white", xlab=list(label="Pearson residuals"))
+
+all.res = grid.arrange(r1, r2, r3, r4, ncol=1) ### plotting together ###
+## CONCLUSION: there are no problems on residuals ##
+
+# Figure A1
+# run lines 34, 139, 145 - 157 from Stramonita.size_ALPS.Rmd
+# save pdf 9x7pol
+grid.arrange(ra1, r1, ra2, r2, ra3, r3, ra4, ncol=2, nrow = 4)
+
+```
+
+
+
+#### Testing for spatial autocorrelation 
+```{r}
+testSpatialAutocorrelation(sim1, x = str_ab$easting, y = str_ab$northing, plot = T) 
+## CONCLUSION: No evidence of spatial autocorrelation ##
+```
+
+
+#### Predictions
+```{r}
+library(ggeffects)
+
+## prediction for wave fetch (km)
+env.wf_log = ggpredict(m.red9.REML, c("wf_log"))## Predicted values for effect of wave fetch ##
+names(env.wf_log) <- c("wf_log", "predicted", "sd", "low", "high", "n") ## renaming output ##
+
+
+m1 = ggplot(str_ab, aes(wf_log, abund)) + geom_point(size= 2.2, alpha=0.3) + 
+  geom_ribbon(data = env.wf_log, aes(y = NULL, ymin = low, ymax = high), fill = "grey50",             alpha=0.5)+geom_line(data = env.wf_log, mapping = aes(x = wf_log, y = predicted), size = 1.3,        color="black") + theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+                                           axis.text.y = element_text(size=12, color="black"),
+                                           axis.title.x = element_text(color="black", size=14),
+                                           axis.title.y = element_text(color="black", size=16)) +
+  labs(x = "wave fetch (km)", y = "total abundance") +
+  theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+  scale_y_continuous(breaks = seq(0, 95, 15)) + scale_x_continuous(breaks = seq(0, 2800, 900))+
+  theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+  theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+  theme(axis.ticks.length = unit(4, "pt"))
+m1 
+
+## prediction for presence of mussel Perna perna
+env.perna = ggpredict(m.red9.REML, c("Pp_ok"))
+names(env.perna) <- c("Pp_ok", "predicted", "sd", "low", "high", "n") ## renaming output ##
+
+str_ab$perna2 = as.factor(str_ab$Pp_ok)
+
+m2 = ggplot(str_ab, aes(perna2, abund, group=perna2)) + geom_boxplot(color="black", size=0.8) +
+  geom_jitter(position=position_jitter(0.01), alpha=0.4, size=2.5, color="darkgray")+
+  theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+                          axis.text.y = element_text(size=12, color="black"),
+                          axis.title.x = element_text(color="black", size=14),
+                          axis.title.y = element_text(color="black", size=16)) +
+  labs(x = expression(paste(italic("P. perna")," occurrence")),  y = "total abundance")+
+  theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+  scale_y_continuous(breaks = seq(0, 95, 15))+ 
+  theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+  theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+  theme(axis.ticks.length = unit(4, "pt"))
+m2
+
+stramonita_pred = ggarrange(m1, m2, ncol = 2, nrow = 1, align = "hv")
+stramonita_pred
+#ggsave("stramonita_pred.tiff", dpi = 600, compression = 'lzw')
+
+```

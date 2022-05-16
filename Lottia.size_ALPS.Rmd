@@ -1,0 +1,457 @@
+---
+title: "Lot.size_ALPS"
+author: "ALPS"
+date: "27-03-2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Starting: loading packages and data
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+rm(list=ls())
+set.seed(13)
+
+# # # # # # # # # # # # # # # # # # # # # # # # 
+# Models testing # LOTTIA SIZE
+# # # # # # # # # # # # # # # # # # # # # # # #
+
+# load packages
+library(lme4)
+library(bbmle)
+library(glmmTMB)
+library(tidyverse)
+library(nlme)
+library(DHARMa)
+library(lmerTest)
+library(nlme)
+library(lattice)
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(gridExtra)
+
+source("functions/HighstatLibV6.r")
+
+# # # LOAD DATA
+lapas_sz1 <- read.csv("data/lottia_sz2020.csv", header=T)
+nodi_sz <- read.csv("data/nodi_sz2020.csv", header=T)
+
+ordem <- unique(nodi_sz[order(nodi_sz$distance_S),]['site'])
+lapas_sz1$site <- factor(lapas_sz1$site, levels = as.character(ordem$site))
+lapas_sz1$subregion <- factor(lapas_sz1$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
+
+lapas_sz <- lapas_sz1 %>% 
+  filter(estagio_recruta_adulto == 'A') %>% 
+  group_by(site, quadrado) %>% 
+  summarise(mean_size = mean(tamanho_mm)) %>% 
+  dplyr::select(site, mean_size) %>% 
+  inner_join(., unique(lapas_sz1[,c(1,6:10,12:18)]), by='site') %>% 
+  data.frame()
+
+rm(lapas_sz1, nodi_sz)
+
+hist(lapas_sz$mean_size)
+shapiro.test(lapas_sz$mean_size)
+hist(log(lapas_sz$mean_size))
+shapiro.test(log(lapas_sz$mean_size))
+
+hist(log(lapas_sz$mean_size))## log-transformation (log (x)) improves normal distribution (USE it) ##
+```
+
+
+#### Plotting for exploration
+```{r data exploration}
+ggplot(lapas_sz, aes(mean_size)) +
+  geom_density(aes(fill=site), alpha=0.5) +
+  #geom_histogram(aes(fill=site)) +
+  facet_grid(subregion~., drop = TRUE) +
+  theme_classic() +
+  theme(legend.position = "")
+
+
+ggplot(lapas_sz, aes(x = site, y = mean_size, color = subregion)) + 
+  geom_boxplot(notch=F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+```
+
+#### VIF and correlations
+```{r VIF}
+lapas_sz %>% 
+  na.omit() %>% 
+  dplyr::select(-region,-subregion,-site,-easting,-northing) %>% 
+  corvif()
+
+lapas_sz %>% 
+  dplyr::select(-region,-subregion,-site) %>% 
+  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+
+# visual inspection
+lapas_sz %>% 
+  dplyr::select(-region,-subregion, -ext_m_tetra) %>% 
+  group_by(site) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>% 
+  gather(key='fatores', value='valores', -site, -mean_size) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=mean_size)) + 
+  geom_smooth(aes(x= valores, y=mean_size)) + 
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+```
+
+
+#### Selecting random structure of predictive model
+```{r dandom, Distribution, message=FALSE, warning=FALSE}
+size.env.full = glmmTMB(log(mean_size) ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + (1|region/subregion/site), data=lapas_sz, REML=T)
+
+size.env.no_reg = glmmTMB(log(mean_size) ~ ndvi +  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + (1|subregion/site), data=lapas_sz, REML=T)
+
+size.env.no_sub = glmmTMB(log(mean_size) ~ ndvi +  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + (1|region/site), data=lapas_sz, REML=T)
+
+size.env.no_loc = glmmTMB(log(mean_size) ~ ndvi +  sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + (1|region/subregion), data=lapas_sz, REML=T)
+
+size.env.reg = glmmTMB(log(mean_size) ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + (1|region), data=lapas_sz, REML=T)
+
+size.env.sub = glmmTMB(log(mean_size) ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + (1|subregion), data=lapas_sz, REML=T)
+
+size.env.loc = glmmTMB(log(mean_size) ~ ndvi + sst_mean + chl_mean + fwd_mean + wf_log + incl_graus_tetra + rugosity + (1|site), data=lapas_sz, REML=T)
+
+cand.set.env <- list(size.env.full, size.env.no_reg, size.env.no_sub, size.env.no_loc, size.env.reg, size.env.sub, size.env.loc)
+
+modnames.env<-c("size.env.full","size.env.no_reg","size.env.no_sub","size.env.no_loc", "size.env.reg", "size.env.sub", "size.env.loc")
+
+AICctab(cand.set.env, mnames=modnames.env, base=TRUE, weights=TRUE, logLik=TRUE)
+
+anova(size.env.no_reg, size.env.full)
+
+## no significant difference, model dens.g1.no_reg is simpler ##
+## CONCLUSION: best random structure includes (1|subregion/site) ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML)  
+```{r fixed}
+dens.g1.ML = glmmTMB(log(mean_size) ~ ndvi + chl_mean + sst_mean + fwd_mean + wf_log + rugosity +                  incl_graus_tetra +(1|subregion/site), data=lapas_sz, REML=FALSE)
+summary(dens.g1.ML)
+
+dens.g2.ML <- update(dens.g1.ML, .~. -ndvi)
+summary(dens.g2.ML)
+
+dens.g3.ML <- update(dens.g2.ML, .~. -chl_mean)
+summary(dens.g3.ML) 
+
+dens.g4.ML <- update(dens.g3.ML, .~. -incl_graus_tetra)
+summary(dens.g4.ML) 
+
+dens.g5.ML <- update(dens.g4.ML, .~. -wf_log)
+summary(dens.g5.ML) 
+
+anova(dens.g4.ML, dens.g5.ML) 
+## there is no difference between model with or without wve fetch; select simpler one ##
+## CONCLUSION: selected model includes: Chla, SST, fwd and rugosity ##
+```
+
+#### Refit with REML and summary 
+```{r REML}
+dens.g.REML <- glmmTMB(log(mean_size) ~ sst_mean + fwd_mean + rugosity + (1|subregion/site), data=lapas_sz, REML=T) 
+summary(dens.g.REML)
+```
+
+#### Checking model assumptions 
+```{r residuals}
+res.lot1 = xyplot(resid(dens.g.REML, type="pearson") ~ fitted(dens.g.REML), 
+       ylab="Pearson residuals", xlab="Fitted values", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+res.lot2 = xyplot(resid(dens.g.REML, type="pearson") ~ sst_mean, data=lapas_sz, 
+       ylab="Pearson residuals", xlab="SST mean", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+res.lot3 = xyplot(resid(dens.g.REML, type="pearson") ~ fwd_mean, data=lapas_sz, 
+       ylab="Pearson residuals", xlab="fwd mean", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+res.lot4 = xyplot(resid(dens.g.REML, type="pearson") ~ rugosity, data=lapas_sz, 
+       ylab="Pearson residuals", xlab="rugosity index", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, span = 0.5, col = 1,lwd=2)})
+
+res.lot5 = histogram(resid(dens.g.REML, type="pearson"), col="white", xlab=list(label="Pearson residuals"))
+
+lottia.residuals = grid.arrange(res.lot1, res.lot2, res.lot3, res.lot4, res.lot5, ncol=2) ### plotting together ###
+plot(lottia.residuals)
+
+## CONCLUSION: there are problems on residuals (apparently) ##
+
+####
+#lapas_sz %>% 
+  select(ndvi, chl_mean, sst_mean, fwd_mean, wf_log, rugosity, incl_graus_tetra, mean_size) %>% 
+  gather(key='fatores', value='valores', -mean_size) %>% 
+  bind_cols(resid=rep(resid(dens.g.REML,  type="pearson"), 7)) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=resid)) + 
+  geom_smooth(aes(x= valores, y=resid)) +
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+```
+
+#### Plotting to check spatial autocorrelation
+```{r check spatial}
+lapas_sz2= as.data.frame(lapas_sz)
+##create jitter (values a little different) because correlation term doesn't work when distance is 0 between replicates###
+lapas_sz2$easting2 =  jitter(lapas_sz2$easting)
+lapas_sz2$northing2 = jitter(lapas_sz2$northing)
+
+library(gstat)
+library(sp)
+library(ncf)
+
+## getting the residuals ##
+E <- residuals(dens.g.REML, type="pearson") 
+## creating dataframe with residuals and coordinates ##
+mydata <- data.frame(E, lapas_sz$easting, lapas_sz$northing) 
+## creating spatial object ##
+coordinates(mydata) <- c("lapas_sz.easting","lapas_sz.northing") 
+## plotting bubblemap with residuals ##
+bubble(mydata, "E", col = c("black","red"), alpha=0.1,
+       main = "Pearson Residuals", xlab = "Northing",
+       ylab = "Easting", scales = list(draw = T)) 
+
+vario1 <- variogram(E ~ 1, mydata)
+plot(vario1)## there is apparently correlation in the residuals at distance 10000 ##
+
+## CONCLUSION: apparently there are not spatial patterns on residuals ##
+```
+
+#### Testing for spatial autocorrelation 
+```{r spatial model}
+# dens.g.REML <- glmmTMB(log(mean_size) ~ sst_mean + fwd_mean + rugosity + (1|subregion/site),                         data=lapas_sz, REML=T) 
+# 
+# mod.gau = lme(log(mean_size) ~ sst_mean + fwd_mean + rugosity, random=~ 1|subregion/site,         data=lapas_sz2, method="REML", correlation = corGaus(form = ~easting2+northing2, nugget = TRUE))
+# 
+# mod.sph = lme(log(mean_size) ~ sst_mean + fwd_mean + rugosity, random=~ 1|subregion/site, data=lapas_sz2, method="REML", correlation = corSpher(form = ~easting2+northing2, nugget = TRUE))
+# 
+# #mod.lin = lme(log(mean_size) ~ sst_mean + fwd_mean + rugosity, random=~ 1|subregion/site, data=lapas_sz2, method="REML", correlation = corLin(form = ~easting2+northing2, nugget = TRUE))
+# ## mod.lin did not converge ##
+# 
+# mod.ratio = lme(log(mean_size) ~ sst_mean + fwd_mean + rugosity, random=~ 1|subregion/site, data=lapas_sz2, method="REML", correlation = corRatio(form = ~easting2+northing2, nugget = TRUE))
+# 
+# mod.exp = lme(log(mean_size) ~ sst_mean + fwd_mean + rugosity, random=~ 1|subregion/site, data=lapas_sz2, method="REML", correlation = corExp(form = ~easting2+northing2, nugget = TRUE))
+# 
+# cand.set.mod <- list(dens.g.REML, mod.gau, mod.sph,  mod.ratio, mod.exp)
+# modnames.mod <-c("dens.g.REML","mod.gau", "mod.sph", "mod.ratio", "mod.exp")
+# AICctab(cand.set.mod, mnames = modnames.mod, base=TRUE, weights=TRUE, logLik=TRUE)
+# 
+# lmtest::lrtest(dens.g.REML, mod.sph)
+
+## Best model WITHOUT SPATIAL AUTOCORRELATION 
+```
+
+#### 
+```{r gam}
+
+## reducing number of samples to site level to decrease dispersion
+lapas1 <- left_join(lapas_sz %>% select(-subregion) %>% aggregate(mean_size ~ site+region+easting+northing, ., mean),
+                    lapas_sz %>% select(site, sst_mean, fwd_mean, rugosity) %>% distinct())
+
+## check relationship shape
+xyplot(lapas1$mean_size ~ lapas1$sst_mean, type=c("p", "smooth"), pch=21, cex=1.2, col="black", fill=c("light blue")) # sigmoid-like shape
+
+xyplot(lapas1$mean_size ~ lapas1$fwd_mean, type=c("p", "smooth"), pch=21, cex=1.2, col="black", fill=c("light blue")) # flat line
+
+xyplot(lapas1$mean_size ~ lapas1$rugosity, type=c("p", "smooth"), pch=21, cex=1.2, col="black", fill=c("light blue")) # sigmoid-like shape
+
+
+# comparing LM, GAM with bs spline and SCAM with constrained shape (sigmoid)
+lm_lp = lm(mean_size ~ sst_mean + fwd_mean + rugosity, data=lapas1)
+gam_lp1 = mgcv::gam(mean_size ~ s(sst_mean) + s(fwd_mean) + s(rugosity), data=lapas1)
+scam_lp = scam::scam(mean_size ~ s(sst_mean, bs="mpd") + s(fwd_mean) + s(rugosity, bs="mpd"), data=lapas1)
+
+summary(lm_lp)
+summary(gam_lp1)
+summary(scam_lp)
+
+AIC(lm_lp, gam_lp1, scam_lp)
+# gam is better
+
+gam_lp <- update(gam_lp1, .~.-s(fwd_mean)) # best model
+gam_lp2 <- update(gam_lp, .~.-s(rugosity)+rugosity)
+AIC(gam_lp, gam_lp2)
+
+summary(gam_lp)
+plot(gam_lp)
+
+
+sim <- simulateResiduals(gam_lp) 
+sim %>% plot() ## OK
+sim %>% testDispersion() ## OK
+sim %>% testUniformity() ## OK
+sim %>% plotResiduals(lapas1$sst_mean, xlab = "SST mean", ylab = "scaled residuals") ## OK
+sim %>% plotResiduals(lapas1$rugosity, xlab = "Rugosity", ylab = "scaled residuals") ## OK
+
+## check spatial autocorrelation
+sim %>% 
+  testSpatialAutocorrelation(x = lapas1$easting, y = lapas1$northing, plot = T) 
+# no spatial correlation
+
+```
+
+### Residuals
+```{r}
+
+par(mfrow = c(3,2))
+mgcv::gam.check(gam_lp)
+
+xyplot(resid(gam_lp, type="pearson") ~ sst_mean, data=lapas1, 
+            ylab="Pearson residuals", xlab="SST", panel = function(x,y){
+              panel.grid(h = -1, v = 2)
+              panel.points(x, y, col = 1)
+              panel.loess(x, y, span=0.5, col = 1, lwd=2)})
+
+xyplot(resid(gam_lp, type="pearson") ~ rugosity, data=lapas1, 
+            ylab="Pearson residuals", xlab="Roughness", panel = function(x,y){
+              panel.grid(h = -1, v = 2)
+              panel.points(x, y, col = 1)
+              panel.loess(x, y, span=0.5, col = 1, lwd=2)})
+
+```
+
+#### Predictions
+```{r predictions}
+# sst_mean
+lot.sst = ggeffects::ggpredict(gam_lp, c("sst_mean[all]"), type = c("fe"))
+names(lot.sst) <- c("sst_mean", "predicted", "sd", "low", "high", "n")
+ 
+sst_pred2 = ggplot(lapas1, aes(sst_mean, mean_size)) + geom_point(size= 2.2, alpha=0.3) + 
+   geom_ribbon(data = lot.sst, aes(y = NULL, ymin = low, ymax = high), fill = "grey50", alpha=0.5)+
+   geom_line(data = lot.sst, mapping = aes(x = sst_mean, y = predicted), size = 1.3, color="black")    +theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+         axis.text.y = element_text(size=12, color="black"),
+         axis.title.x = element_text(color="black", size=14),
+         axis.title.y = element_text(color="black", size=16)) +
+   labs(x = expression(paste("sea surface temperature (",degree,"C)")), y = "size (mm)") +
+   theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+   theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+   theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+   theme(axis.ticks.length = unit(4, "pt"), legend.position = "none")# 
+
+ 
+# fwd_mean
+lot.fwd = ggeffects::ggpredict(gam_lp, c("fwd_mean[all]"), type = c("fe"))
+names(lot.fwd) <- c("fwd_mean", "predicted", "sd", "low", "high", "n")
+ 
+fwd_pred2 = ggplot(lapas_sz, aes(fwd_mean, mean_size)) + 
+   geom_point(size= 2.2, alpha=0.3) + 
+   geom_ribbon(data = lot.fwd, aes(y = NULL, ymin = low, ymax = high), fill = "grey50", alpha=0.5)+
+   geom_line(data = lot.fwd, mapping = aes(x = fwd_mean, y = predicted), size = 1.3, color="black")    +theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+         axis.text.y = element_text(size=12, color="black"),
+         axis.title.x = element_text(color="black", size=14),
+         axis.title.y = element_text(color="black", size=16)) +
+   labs(x = "freshwater discharge index", y = "size (mm)") +
+   theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+   theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+   theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+   theme(axis.ticks.length = unit(4, "pt"), legend.position = "none")
+ 
+ 
+#rugosity
+lot.rug = ggeffects::ggpredict(gam_lp, c("rugosity[all]"), type = c("fe"))
+names(lot.rug) <- c("rugosity", "predicted", "sd", "low", "high", "n")
+ 
+incl_pred2 = ggplot(lapas_sz, aes(rugosity, mean_size)) + 
+   geom_point(size= 2.2, alpha=0.3) +#,aes(color=subregion)) + 
+   geom_ribbon(data = lot.rug, aes(y = NULL, ymin = low, ymax = high), fill = "grey50", alpha=0.5)+
+   geom_line(data = lot.rug, mapping = aes(x = rugosity, y = predicted), size = 1.3, color="black")    +theme_classic() + theme(axis.text.x = element_text(size=12, color="black"), 
+         axis.text.y = element_text(size=12, color="black"),
+         axis.title.x = element_text(color="black", size=14),
+         axis.title.y = element_text(color="black", size=16)) +
+   labs(x = "rugosity index", y = "size (mm)") +
+   theme(strip.text.x = element_text(size = 10), strip.text.y = element_text(size = 10))+
+   theme(axis.ticks = element_line(colour = "black", size = 0.8)) +
+   theme(axis.line = element_line(colour = 'black', size = 0.8)) +
+   theme(axis.ticks.length = unit(4, "pt"), legend.position = "none")
+
+lapa_sz_preds = ggarrange(sst_pred2, fwd_pred2, incl_pred2, ncol = 2, nrow = 2, align = "hv")## arranging plots together ##
+lapa_sz_preds
+# ggsave("lapa_sz_preds.tiff", dpi = 600, compression = 'lzw')
+```
+
+
+
+#### Trying GAMM (but not sure about it)... maybe is better to continue with GLMM?
+```{r GAMM}
+
+# library(mgcv)
+# library(DHARMa)
+# 
+# sz.gl.gam = gam(mean_size ~ s(sst_mean, bs='cs') + s(chl_mean, bs='cs') + s(wf_log, bs='cs') + s(ndvi, bs='cs') +s(fwd_mean, bs='cs') + s(rugosity, bs='cs') + s(incl_graus_tetra, bs='cs') +
+#                     s(site, subregion, bs = 're'), data=lapas_sz, REML=T)
+# summary(sz.gl.gam)
+# gam.check(sz.gl.gam)
+# 
+# sz.gl.gam1 = update(sz.gl.gam, .~.-s(chl_mean, bs='cs'))
+# summary(sz.gl.gam1)
+# 
+# sz.gl.gam2 = update(sz.gl.gam1, .~.-s(wf_log, bs='cs'))
+# summary(sz.gl.gam2)
+# 
+# sz.gl.gam3 = update(sz.gl.gam2, .~.-s(ndvi, bs='cs'))
+# summary(sz.gl.gam3)
+# 
+# sz.gl.gam4 = update(sz.gl.gam3, .~.-s(incl_graus_tetra, bs='cs'))
+# summary(sz.gl.gam4)
+# 
+# sz.gl.gam5 = update(sz.gl.gam4, .~.-s(fwd_mean, bs='cs'))
+# summary(sz.gl.gam5)
+# 
+# AIC(sz.gl.gam3, sz.gl.gam4, sz.gl.gam5)
+# anova(sz.gl.gam4,sz.gl.gam5)
+# 
+# gam.check(sz.gl.gam5)
+# plot.gam(sz.gl.gam5)
+# 
+# ## residuals / SOME IMPROOVEMENT BUT NOT ENOUGH
+# SO.lp.sz.gam <- simulateResiduals(fittedModel = sz.gl.gam5)
+# plot(SO.lp.sz.gam)
+# 
+# # ok
+# plotResiduals(lapas_sz$sst_mean,  SO.lp.sz.gam$scaledResiduals)
+# plotResiduals(lapas_sz$rugosity,  SO.lp.sz.gam$scaledResiduals)
+# 
+# # checking spatial dependency / NO SPATIAL DEPENDENCY IN GAM MODEL
+# lapas_sz$easting2 = jitter(lapas_sz$easting) 
+# lapas_sz$northing2 = jitter(lapas_sz$northing)
+# testSpatialAutocorrelation(simulationOutput = SO.lp.sz.gam, x = lapas_sz$easting2, y= lapas_sz$northing2)
+# 
+# 
+# # # # adding coordinates
+# 
+# lp.gam.sp = gam(mean_size ~ s(sst_mean, bs='cs') + s(rugosity, bs='cs') + te(easting, northing) + s(site, subregion, bs = 're'), data=lapas_sz, REML=T)
+# 
+# summary(lp.gam.sp)
+# gam.check(lp.gam.sp)
+# plot.gam(lp.gam.sp, scheme = 1)
+# 
+# ## residuals / BETTER WITH COORDINATES
+# SO.lp.sz.gamSP <- simulateResiduals(fittedModel = lp.gam.sp)
+# plot(SO.lp.sz.gamSP)
+# 
+# # ok
+# plotResiduals(lapas_sz$sst_mean,  SO.lp.sz.gamSP$scaledResiduals)
+# plotResiduals(lapas_sz$rugosity,  SO.lp.sz.gamSP$scaledResiduals)
+# 
+# testSpatialAutocorrelation(simulationOutput = SO.lp.sz.gamSP, x = lapas_sz$easting2, y= lapas_sz$northing2)
+
+# CONCLUSION: SPATIAL CORRELATION WAS DETECTED FOR NON-SPATIAL GAM. SPATIAL GAM HAS BETTER RESIDUALS, BUT THERE IS STILL SOME PATTERNS
+```
+
+
+

@@ -1,0 +1,478 @@
+---
+title: "Nodilittorina.abundance_ALPS"
+author: "ALPS"
+date: "30 de março de 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Starting: loading packages and data
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+rm(list=ls())
+set.seed(13)
+
+# # # # # # # # # # # # # # # # # # # # # # # # 
+# Models testing # ECHINOLITTORINA SIZE
+# # # # # # # # # # # # # # # # # # # # # # # #
+
+# load packages
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(ggeffects)
+library(mgcv)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+source("functions/HighstatLibV6.r")
+
+# # # LOAD DATA
+nodi_sz <- read.csv("data/nodi_sz2020.csv", header=T)
+
+ordem <- unique(nodi_sz[order(nodi_sz$distance_S),]['site'])
+nodi_sz$site <- factor(nodi_sz$site, levels = as.character(ordem$site))
+nodi_sz$subregion <- factor(nodi_sz$subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ"))
+
+rm(ordem)
+
+summary(nodi_sz)
+
+hist(nodi_sz$tamanho_mm)
+sample(nodi_sz$tamanho_mm, 5000) %>% shapiro.test()
+hist(log(sample(nodi_sz$tamanho_mm, 5000)))
+shapiro.test(log(sample(nodi_sz$tamanho_mm, 5000)))
+```
+
+#### Plotting to check
+```{r}
+ggplot(nodi_sz, aes(tamanho_mm)) +
+  geom_density(aes(fill=site), alpha=0.5) +
+  #geom_histogram(aes(fill=site)) +
+  facet_grid(subregion~., drop = TRUE) +
+  theme_classic() +
+  theme(legend.position = "")
+
+ggplot(nodi_sz, aes(x = site, y = tamanho_mm, color = subregion)) + 
+  geom_boxplot(notch=T) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+#### VIF and correlations
+```{r}
+nodi_sz %>% 
+  na.omit() %>% 
+  dplyr::select(-region, -subregion, -site, -easting, -northing, -ext, -distance_S, -incl_graus_chth, -ndvi) %>% 
+  corvif()
+
+nodi_sz %>% 
+  dplyr::select(-region, -subregion, -site, -easting, -northing, -ext, -distance_S, -incl_graus_chth, -ndvi) %>% 
+  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+```
+
+#### Visual inspection
+```{r}
+nodi_sz %>% 
+  dplyr::select(-region, -subregion, -easting, -northing, -ext, -distance_S, -incl_graus_chth, -ndvi, -ext_m_chth) %>% 
+  group_by(site) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>% 
+  gather(key='fatores', value='valores', -site, -tamanho_mm) %>% 
+  ggplot() + 
+  geom_point(aes(x= valores, y=tamanho_mm)) + 
+  geom_smooth(aes(x= valores, y=tamanho_mm)) + 
+  facet_wrap(~ fatores, ncol=3, scales = 'free') +
+  theme_classic()
+
+nodi <- nodi_sz %>% 
+  dplyr::select(-region, -subregion, -easting, -northing, -ext, -distance_S, -incl_graus_chth, -ndvi, -ext_m_chth) %>% 
+  group_by(site) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>% data.frame()
+
+# offset
+nodi_sz <- nodi_sz %>% 
+  select(site, tamanho_mm) %>% 
+  group_by(site) %>% 
+  summarise(ofset = length(tamanho_mm)) %>% 
+  full_join(nodi_sz, by='site') %>% 
+  data.frame()
+```
+
+
+```{r}
+size.n.full = glmmTMB(tamanho_mm ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + (1|region/subregion/site), data=nodi_sz, REML=T)
+
+size.n.no_reg = glmmTMB(tamanho_mm ~ ndvi_sup_diff +  sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + (1|subregion/site), data=nodi_sz, REML=T)
+
+size.n.no_sub = glmmTMB(tamanho_mm ~ ndvi_sup_diff +  sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity + (1|region/site), data=nodi_sz, REML=T)
+
+size.n.no_loc = glmmTMB(tamanho_mm ~ ndvi_sup_diff +  sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity  + (1|region/subregion), data=nodi_sz, REML=T)
+
+size.n.reg = glmmTMB(tamanho_mm ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity  +(1|region), data=nodi_sz, REML=T)
+
+size.n.sub = glmmTMB(tamanho_mm ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity  +(1|subregion), data=nodi_sz, REML=T)
+
+size.n.loc = glmmTMB(tamanho_mm ~ ndvi_sup_diff + sst_mean + chl_mean + fwd_mean + wf_log + inclinacao + rugosity  +(1|site), data=nodi_sz, REML=T)
+
+
+cand.set.n <- list(size.n.full, size.n.no_reg, size.n.no_sub, size.n.no_loc, size.n.reg, size.n.sub, size.n.loc)
+modnames.n<-c("size.n.full", "size.n.no_reg", "size.n.no_sub", "size.n.no_loc","size.n.reg", "size.n.sub", "size.n.loc")
+AICctab(cand.set.n, mnames=modnames.n, base=TRUE, weights=TRUE, logLik=TRUE)## best model: size.n.no_reg and size.n.full
+
+anova(size.n.no_reg, size.n.full) ## no significant difference, model dens.nb1.no_reg is simpler ##
+## CONCLUSION: best random structure is subregion and site ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML) 
+```{r}
+dens.n.ML = glmmTMB(tamanho_mm ~ ndvi_sup_diff + chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + (1|subregion/site), data=nodi_sz, REML=FALSE)
+summary(dens.n.ML)
+# nothing significant
+
+# heteroscedasticity in residuals
+library(lattice)
+xyplot(resid(dens.n.ML, type="pearson") ~ fitted(dens.n.ML), 
+       ylab="Pearson residuals", xlab="", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, col = 1,lwd=2)})#
+
+# testing boxcox transformation
+boxcox_size <- caret::BoxCoxTrans(nodi_sz$tamanho_mm)
+nodi_sz <- cbind(nodi_sz, size_BC=predict(boxcox_size, nodi_sz$tamanho_mm))
+
+hist(nodi_sz$size_BC)## far better normal distribution ##
+```
+
+#### Selecting fixed structure of predictive model (method = ML) again (BC transformation)
+```{r}
+dens.n.MLBC = glmmTMB(size_BC ~ ndvi_sup_diff + chl_mean + sst_mean + fwd_mean + wf_log + rugosity + inclinacao + (1|subregion/site), data=nodi_sz, REML=FALSE)
+
+summary(dens.n.MLBC) # nothing significant again
+
+# improvement in residuals
+xyplot(resid(dens.n.MLBC, type="pearson") ~ fitted(dens.n.MLBC), 
+       ylab="Pearson residuals", xlab="", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, col = 1,lwd=2)})#
+```
+
+#### Proceeding to model selection (fixed structure) (REML= F)
+```{r}
+# proceed model selection
+dens.n.ML1 <- update(dens.n.MLBC, .~. -chl_mean)
+summary(dens.n.ML1)
+
+dens.n.ML2 <- update(dens.n.ML1, .~. -rugosity)
+summary(dens.n.ML2)
+
+dens.n.ML3 <- update(dens.n.ML2, .~. -inclinacao)
+summary(dens.n.ML3)
+
+dens.n.ML4 <- update(dens.n.ML3, .~. -fwd_mean) 
+summary(dens.n.ML4)
+
+dens.n.ML5 <- update(dens.n.ML4, .~. -ndvi_sup_diff)
+summary(dens.n.ML5)
+
+dens.n.ML6 <- update(dens.n.ML5, .~. -wf_log)
+summary(dens.n.ML6)
+
+dens.n.ML7 <- update(dens.n.ML6, .~. -sst_mean)
+summary(dens.n.ML7) 
+
+## CONCLUSION: none of predictive variables were selected ##
+```
+
+#### Refit with REML and summary 
+```{r}
+dens.n.REML = glmmTMB(size_BC ~ (1|subregion/site), data=nodi_sz, REML=TRUE)
+## model doesn't converge ##
+
+dens.n.REML2 = glmmTMB(size_BC ~ (1|region/subregion/site), data=nodi_sz, REML=TRUE)
+## large portion of variance on region: put this factor back on model???
+
+### What about testing model with random factors as fixed? ###
+
+anova(dens.n.REML, dens.n.REML2) ## models are no different but model without REGION doesn't converge ##
+
+sjPlot::plot_model(dens.n.REML2, type = "re", show.values = F, value.offset = .4)
+```
+
+#### Checking model assumptions 
+```{r}
+plot(dens.n.REML2) ## OK
+qqnorm(resid(dens.n.REML2)); qqline(resid(dens.n.REML2)) ## OK
+hist(resid(dens.n.REML2)) ## OK
+
+xyplot(resid(dens.n.REML2, type="pearson") ~ fitted(dens.n.REML2), 
+       ylab="Pearson residuals", xlab="Fitted values", panel = function(x,y){
+         panel.grid(h = -1, v = 2)
+         panel.points(x, y, col = 1)
+         panel.loess(x, y, span=0.5, col = 1, lwd=2)})##
+
+histogram(resid(dens.n.REML2, type="pearson"), col="white", xlab=list(label="Pearson residuals"))
+
+
+
+```
+
+#### Testing spatial structure on models
+```{r}
+# nodi_sz$easting2 = jitter(nodi_sz$easting) 
+# nodi_sz$northing2 = jitter(nodi_sz$northing)
+# 
+# lmc <- lmeControl(niterEM = 5200, msMaxIter = 5200)
+# 
+# dens.n.REML1 = lme(size_BC ~ 1, random = ~1|subregion/site, data=nodi_sz, method = "REML", control= lmc)
+# 
+# dens.n.REML2b = lme(size_BC ~ 1, random = ~1|region/subregion/site, data=nodi_sz, method = "REML", control= lmc)
+# 
+# ### spatial models (considering 1|region/subregion/site or 1|subregion/site)
+# env.gau = lme(size_BC ~ 1, random=~ 1|subregion/site, data=nodi_sz, method="REML",
+#               correlation = corGaus(form = ~easting2+northing2, nugget = TRUE))
+# 
+# env.gaur = lme(size_BC ~ 1, random=~ 1|region/subregion/site, data=nodi_sz, method="REML",
+#                correlation = corGaus(form = ~easting2+northing2, nugget = TRUE))
+# 
+# env.sph = lme(size_BC ~ 1, random=~ 1|region/subregion/site, data=nodi_sz, method="REML",
+#               correlation = corSpher(form = ~easting2+northing2, nugget = TRUE))
+# 
+# env.sph.noR = lme(size_BC ~ 1, random=~ 1|subregion/site, data=nodi_sz, method="REML",
+#                correlation = corSpher(form = ~easting2+northing2, nugget = TRUE))
+# 
+# env.lin = lme(size_BC ~ 1, random=~ 1|subregion/site, data=nodi_sz, method="REML",
+#               correlation = corLin(form = ~easting2+northing2, nugget = TRUE))
+# 
+# env.linr = lme(size_BC ~ 1, random=~ 1|region/subregion/site, data=nodi_sz, method="REML",
+#                correlation = corLin(form = ~easting2+northing2, nugget = TRUE), control=lmc)
+# 
+# env.ratio = lme(size_BC ~ 1, random=~ 1|subregion/site, data=nodi_sz, method="REML",
+#                 correlation = corRatio(form = ~easting2 + northing2, nugget = TRUE), control= lmc)
+# 
+# env.ratior = lme(size_BC ~1, random=~ 1|region/subregion/site, data=nodi_sz, method="REML",
+#                  correlation = corRatio(form = ~easting2+northing2, nugget = TRUE), control= lmc)
+# 
+# env.exp = lme(size_BC ~1, random=~ 1|subregion/site, data=nodi_sz, method="REML",
+#               correlation = corExp(form = ~easting2+northing2, nugget = TRUE), control= lmc)
+# 
+# env.expr = lme(size_BC ~ 1, random=~ 1|region/subregion/site, data=nodi_sz, method="REML",
+#                correlation = corExp(form = ~easting2+northing2, nugget = TRUE), control= lmc)
+# 
+# cand.set.env2 <- list(dens.n.REML1, dens.n.REML2, env.lin, env.gau, env.sph, env.ratio, env.exp, env.gaur, env.sph.noR, env.ratior, env.expr, env.linr) #env.lin
+# modnames.env2<-c("dens.n.REML1", "dens.n.REML2", "env.lin", "env.gau", "env.sph", "env.ratio", "env.exp", "env.gaur", "env.sph.noR", "env.ratior", "env.expr", "env.linr") #"env.lin", 
+# AICctab(cand.set.env2, mnames=modnames.env2, base=TRUE, weights=TRUE, logLik=TRUE)
+# 
+# anova(dens.n.REML1, dens.n.REML2b)
+# ## no difference between random structure; best model dens.n.REML1##
+# ## CONCLUSION: spatial structure did not improve models ## 
+# ## What to do next??? ##
+```
+
+#### Plotting to check spatial patterns
+```{r}
+library(gstat)
+library(sp)
+RES   = residuals(dens.n.REML1, type="pearson")
+
+mydata = data.frame(RES, nodi_sz$easting2, nodi_sz$northing2)
+
+coordinates(mydata) <- c("nodi_sz.easting2","nodi_sz.northing2")
+
+bubble(mydata, "RES", col = c("black","red"), alpha=0.1,
+       main = "Pearson Residuals", xlab = "Northing",
+       ylab = "Easting", scales = list(draw = T))  ## not clear
+
+variogram1 <- variogram(RES ~ 1, mydata)
+plot(variogram1) ## apparently there are some spatial patterns on residuals ##
+
+### trying best spatial model (env.linr) ###
+RES.lin   = residuals(env.linr, type="pearson")
+
+mydata2 = data.frame(RES.lin, nodi_sz$easting2, nodi_sz$northing2)
+
+coordinates(mydata2) <- c("nodi_sz.easting2","nodi_sz.northing2")
+
+bubble(mydata2, "RES.lin", col = c("black","red"), alpha=0.1,
+       main = "Pearson Residuals", xlab = "Northing",
+       ylab = "Easting", scales = list(draw = T))  ## not clear
+
+variogram2 <- variogram(RES.lin ~ 1, mydata2)
+plot(variogram2) ## asame patterns as model without spatial correlation term ##
+```
+
+
+#### Trying GAM (not sure about it)
+```{r}
+nd.gl.gam.all = gam(size_BC ~ s(ndvi_sup_diff) + s(chl_mean) + s(sst_mean) + 
+                      s(fwd_mean) + s(wf_log) + s(rugosity) + s(incl_graus_chth) +
+                      s(site, subregion, bs = 're'), data=nodi_sz, REML=T)
+summary(nd.gl.gam.all)
+
+nd.gl.gam1 <- update(nd.gl.gam.all, .~.-s(ndvi_sup_diff))
+summary(nd.gl.gam1)
+
+nd.gl.gam2 <- update(nd.gl.gam1, .~.-s(rugosity))
+summary(nd.gl.gam2)
+
+nd.gl.gam3 <- update(nd.gl.gam2, .~.-s(chl_mean))
+summary(nd.gl.gam3)
+
+nd.gl.gam4 <- update(nd.gl.gam3, .~.-s(incl_graus_chth))
+summary(nd.gl.gam4)
+
+nd.gl.gam5 <- update(nd.gl.gam4, .~.-s(fwd_mean)+fwd_mean)
+summary(nd.gl.gam5)
+
+nd.gl.gam6 <- update(nd.gl.gam5, .~.-s(wf_log)+wf_log)
+summary(nd.gl.gam6)
+
+gam.check(nd.gl.gam6)
+plot.gam(nd.gl.gam6, pages=1)
+
+#
+sim <- simulateResiduals(nd.gl.gam6) 
+sim %>% plot() ## OK
+sim %>% testDispersion() ## OK
+sim %>% plotResiduals(nodi_sz$sst_mean, xlab = "SST mean", ylab = "scaled residuals") ## OK
+sim %>% plotResiduals(nodi_sz$fwd_mean, xlab = "FWD mean", ylab = "scaled residuals") ## OK
+sim %>% plotResiduals(nodi_sz$wf_log, xlab = "WF log", ylab = "scaled residuals") ## OK
+sim %>% testSpatialAutocorrelation(x = nodi_sz$easting %>% jitter(), y = nodi_sz$northing %>% jitter(), plot = T) 
+
+## spatial dependence detected and quantile deviations
+
+
+## reduce to site level
+abiot <- read.csv("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/data/abioticos_2020.csv", header = T)
+
+nodi <- nodi_sz %>%
+  group_by(site) %>% 
+  #summarise(s_range = tamanho_mm - mean(tamanho_mm)) %>% 
+  summarise(s_range = max(tamanho_mm) - min(tamanho_mm),
+            tamanho_mm = mean(tamanho_mm),
+            size_BC = mean(size_BC)) %>% 
+  left_join(nodi_sz %>% select(region, subregion, easting, northing, site, distance_S, ndvi_sup_diff, chl_mean, sst_mean, fwd_mean, wf_log, rugosity, inclinacao) %>% distinct()) %>% 
+  left_join(abiot[,c("site", "lat", "long")])
+
+
+# GAM
+m_gam <- gam(tamanho_mm ~ s(sst_mean) + s(ndvi_sup_diff) + s(fwd_mean) +
+               s(chl_mean) + s(wf_log) + s(rugosity), data = nodi, REML = F)
+summary(m_gam)
+
+mod1 <- update(m_gam, .~.-s(ndvi_sup_diff))
+summary(mod1)
+mod2 <- update(mod1, .~.-s(rugosity))
+summary(mod2)
+mod3 <- update(mod2, .~.-s(chl_mean)+chl_mean)
+summary(mod3)
+mod4 <- gam(tamanho_mm ~ s(sst_mean, k=4) + s(fwd_mean) + s(wf_log, k=4), data = nodi, REML = F)
+summary(mod4)
+
+#
+plot(mod3)
+gam.check(mod4)
+# maybe some covariance between variables
+
+#
+simulateResiduals(mod3) %>% plot() ## quantile deviance
+simulateResiduals(mod3) %>% testDispersion() ## OK
+simulateResiduals(mod3) %>% plotResiduals(nodi$sst_mean, xlab = "SST mean", ylab = "scaled residuals") ## OK
+simulateResiduals(mod3) %>% plotResiduals(nodi$fwd_mean, xlab = "FWD mean", ylab = "scaled residuals") ## OK
+simulateResiduals(mod3) %>% plotResiduals(nodi$wf_log, xlab = "WF log", ylab = "scaled residuals") ## OK
+simulateResiduals(mod3) %>% testSpatialAutocorrelation(x = nodi$easting, y = nodi$northing, plot = T) 
+# spatial dependence
+
+## add coordinates
+mod4 <- update(mod3, .~.+te(lat, long))
+summary(mod4)
+mod5 <- update(mod4, .~.-s(sst_mean))
+summary(mod5)
+mod6 <- update(mod5, .~.-chl_mean)
+summary(mod6)
+mod7 <- update(mod6, .~.-s(wf_log))
+summary(mod7)
+mod8 <- update(mod7, .~.-s(fwd_mean))
+summary(mod8)
+
+plot(mod8)
+gam.check(mod8)
+
+#
+simulateResiduals(mod8) %>% plot() ## quantile deviance
+simulateResiduals(mod8) %>% testDispersion() ## OK
+simulateResiduals(mod8) %>% testSpatialAutocorrelation(x = nodi$easting, y = nodi$northing, plot = T) 
+# no spatial dependence
+
+plot(mod8)
+plot(resid(mod8))
+plot(resid(mod8), nodi$long, las=1)
+plot(resid(mod8), nodi$lat, las=1)
+qqnorm(resid(mod8)); qqline(resid(mod8)) ## OK
+hist(resid(mod8)) ## not ok
+
+```
+
+```{r linear model}
+# checking mean size per subregion, there is a clear difference between MRBS+SSCh and the rest
+boxplot(tamanho_mm ~ subregion, data = nodi)
+
+mod_lin0 <- lm(tamanho_mm ~ 1, data = nodi) 
+summary(mod_lin)
+mod_lin <- lm(tamanho_mm ~ lat + long, data = nodi)
+# improvement in residuals with BC transformation
+mod_lin1 <- lm(size_BC ~ lat + long, data = nodi)
+summary(mod_lin1)
+mod_lin2 <- lm(size_BC ~ lat, data = nodi)
+summary(mod_lin2)
+
+AIC(mod_lin1, mod_lin, mod_lin2)
+anova(mod_lin1, mod_lin2)
+
+plot(resid(mod_lin2))
+plot(resid(mod_lin2), nodi$long, las=1)
+plot(resid(mod_lin2), nodi$lat, las=1)
+qqnorm(resid(mod_lin2)); qqline(resid(mod_lin2)) ## OK
+hist(resid(mod_lin2)) ## OK
+shapiro.test(resid(mod_lin2)) ## OK
+
+#
+nodi %>% 
+  select(-region, -site, -size_BC:-region,- easting:-distance_S, -s_range) %>%
+  aggregate(. ~ subregion, ., mean)
+
+#### correlation
+cor.test(nodi$tamanho_mm, nodi$lat)
+
+ggplot(nodi, aes(lat, tamanho_mm)) + 
+  geom_point(alpha=0.7, aes(color = subregion)) +
+  theme_classic() +
+  theme(legend.title = element_blank()) +
+  geom_smooth(method = "lm") +
+  scale_x_reverse() +
+  labs(x = "Latitude (degrees)", y = "Size (cm)")
+
+#####
+# analysis of variance
+anova <- lm(size_BC ~ ofset + region:subregion, nodi %>% left_join(nodi_sz %>% select(site, ofset) %>% distinct())) # %>% sjPlot::plot_models()
+anova(anova)
+
+model_means <- emmeans::emmeans(object = anova,
+                       specs = ~ subregion | region) 
+
+# add letters to each mean
+model_means_cld <- multcomp::cld(object = model_means,
+                       adjust = "Tukey",
+                       Letters = letters,
+                       alpha = 0.05) %>% 
+  data.frame() %>% 
+  filter(!is.na(emmean))
+  
+
+````
+
