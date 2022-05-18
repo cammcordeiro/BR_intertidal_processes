@@ -17,18 +17,18 @@ library(patchwork)
 
 
 # load functions
-source("~/Google Drive/Cursos e aulas/data analysis/R/summarySE.r")
-source("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/Brazil_project/functions/plot_pca_sep.r")
-source("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/Brazil_project/functions/HighstatLibV6.R")
+source("functions/summarySE.r")
+source("functions/plot_pca_sep.r")
+source("functions/HighstatLibV6.R")
 
 # set wd
 # setwd("/Users/cesarcordeiro/Google Drive/Post-doc_UNIFESP/Dados/NDVI/out/")
 # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
 ##### LER ESSE ARQUIVO
-ndvi <- read.csv("~/Google Drive/Post-doc_UNIFESP/Dados/NDVI/out/ndvi_ok_31May18.csv", header=TRUE, sep=",") # versão atualizada a partir dos comandos das linhas 34 - 75
+ndvi <- read.csv("data/ndvi_ok_31May18.csv", header=TRUE, sep=",") # versão atualizada a partir dos comandos das linhas 34 - 75
 # abiot2020 <- read.csv("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/data/abioticos_2020.csv", header=T)
-abiot <- read.csv("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/Brazil_project/data/tetra_ab2020.csv", header=T) %>% 
+abiot <- read.csv("data/tetra_ab2020.csv", header=T) %>% 
   select(site, subregion, chl_mean:inclinacao, distance_S) %>% 
   distinct()
 
@@ -178,7 +178,7 @@ Gpca_1 + Gpca_2
 ### FIGURE 7
 # RDA
 
-consumers <- read.csv("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/data/old/consumers.csv", header =T)
+consumers <- read.csv("data/consumers.csv", header =T)
 fauna <- consumers[,c(1, 4:6,8:10,12:15)] 
 
 fauna.range <- consumers[,c(4:6,8:10,12:15)] %>%
@@ -244,8 +244,11 @@ sp = as.data.frame(ii$species[,1:2])*2#Depending on the drawing result, the draw
 st = as.data.frame(ii$sites[,1:2]) %>% 
   rownames_to_column("site") %>% 
   left_join(abiot %>% select(site, subregion)) %>% 
-  mutate(subregion = factor(subregion, levels = c("LRRJ","MRRJ","SCRJ","Ubatuba","SSCh","MRBS")))
+  mutate(subregion = factor(subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ")))
+
 yz = as.data.frame(ii$biplot[,1:2])
+
+c("LRRJ","MRRJ","SCRJ","Ubatuba","SSCh","MRBS")
 
 
 # polygon
@@ -267,7 +270,7 @@ ggplot() +
                aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
                arrow = arrow(angle = 22.5, length = unit(0.3,"cm"), type = "closed"), 
                linetype = 2, size = 0.6, colour = "black") +
-  geom_text_repel(data = yz, aes(RDA1, RDA2, label = row.names(yz)), label.padding = 0.25) +
+  ggrepel::geom_text_repel(data = yz, aes(RDA1, RDA2, label = row.names(yz)), label.padding = 0.25) +
   labs(x = paste("RDA 1 (", format(100 *ii$concont[[1]][2,1], digits=4), "%)", sep=""),
        y = paste("RDA 2 (", format(100 *ii$concont[[1]][2,2], digits=4), "%)", sep=""))+
   guides(shape=guide_legend(title=NULL,color="black"),
@@ -277,6 +280,8 @@ ggplot() +
   theme(panel.grid = element_blank()) +
   scale_color_manual(values = c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02')) +
   scale_fill_manual(values = c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02'))
+
+ggsave("figure2.svg", width = 8, height = 4.5, units = "in")
 
 
 ## VARIANCE PARTITIONING
