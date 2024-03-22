@@ -23,7 +23,7 @@ library(ggpubr)
 library(grid)
 library(gridExtra)
 
-# source("script/HighstatLibV6.r")
+source("functions/HighstatLibV6.r")
 
 
 tetra_sz1 <- read.csv("data/tetra_sz2020.csv", header=T)

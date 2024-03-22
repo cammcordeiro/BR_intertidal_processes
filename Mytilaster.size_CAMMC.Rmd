@@ -31,7 +31,7 @@ library(ggpubr)
 library(grid)
 library(gridExtra)
 
-# source("script/HighstatLibV6.r")
+source("functions/HighstatLibV6.r")
 
 myt_size1 <- read.csv("data/mytilaster_sz2020.csv", header=T)
 ordem <- unique(myt_size1[order(myt_size1$distance_S),]['site'])
@@ -172,6 +172,7 @@ hist_res <- histogram(resid(size.m.REML, type="pearson"), col="white", xlab=list
 
 Mytilaster.resid = grid.arrange(myt_s_res, sst_s_res, hist_res, ncol=3) ### plotting together ###
 plot(Mytilaster.resid)
+
 ## CONCLUSION: residuals look fine ##
 ## ALPS comment: not sure about pearson residuals vs. fitted values ##
 

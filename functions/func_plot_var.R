@@ -45,7 +45,7 @@ plotg.col <- function(df, variavelx, variavely, legx, legy) {
     stat_summary(fun=mean, geom="point", shape=18, size=1, color="black") +
     stat_summary(fun.data = mean_se, fun.args = list(mult = 1.96), color="black") +
     labs(x=legx, y=legy) + #title(paste(titulo)) +
-    scale_color_manual(values=c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02'))
+    scale_color_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4"))
 }
 
 g_legend <- function(a.gplot){ 
@@ -62,48 +62,84 @@ g_legend <- function(a.gplot){
 
 
 # get all sources of variance
-all_variance <- function(var1, familia1, dados1, var2, familia2, dados2, spp) {
+# all_variance <- function(var1, familia1, dados1, var2, familia2, dados2, spp) {
+#   
+#   formila1 <- as.formula(paste(var1, " ~ ", paste(c(1, '(1|region/subregion/site)'), collapse= "+")))
+#   formila2 <- as.formula(paste(var2, " ~ ", paste(c(1, '(1|region/subregion/site)'), collapse= "+")))
+#   
+#   model1 <- glmmTMB(formila1, data = dados1, REML=T, family = familia1, ziformula=~0)
+#   model2 <- glmmTMB(formila2, data = dados2, REML=T, family = familia2, ziformula=~0)
+#   
+#   bind_rows(
+#     
+#     # size
+#     bind_rows(
+#       model1 %>% 
+#         VarCorr() %>% 
+#         unlist() %>%
+#         data.frame() %>% 
+#         rownames_to_column(var = 'fator') %>% 
+#         rename(variance = '.'), 
+#       
+#       get_variance_residual(model1) %>% 
+#         data.frame() %>% 
+#         rownames_to_column(var = 'fator') %>% 
+#         rename(variance = '.')  
+#     ) %>% 
+#       mutate(variavel = var1,
+#              spp = spp),
+#     
+#     # abundance or cover
+#     bind_rows(
+#       model2 %>% 
+#         VarCorr() %>% 
+#         unlist() %>%
+#         data.frame() %>% 
+#         rownames_to_column(var = 'fator') %>% 
+#         rename(variance = '.'), 
+#       
+#       get_variance_residual(model2) %>% 
+#         data.frame() %>% 
+#         rownames_to_column(var = 'fator') %>% 
+#         rename(variance = '.')  
+#     ) %>% 
+#       mutate(variavel = var2,
+#              spp = spp)
+#   )
+# }
+
+
+all_variance <- function(var1, familia1, dados1, var2, familia2, dados2, spp, variable1, variable2) {
   
-  formila1 <- as.formula(paste(var1, " ~ ", paste(c(1, '(1|region/subregion/site)'), collapse= "+")))
-  formila2 <- as.formula(paste(var2, " ~ ", paste(c(1, '(1|region/subregion/site)'), collapse= "+")))
+  formila1 <- as.formula(paste(var1, " ~ ", paste('(1|region/subregion/site)', collapse= "+")))
+  formila2 <- as.formula(paste(var2, " ~ ", paste('(1|region/subregion/site)', collapse= "+")))
   
-  model1 <- glmmTMB(formila1, data = dados1, REML=T, family = familia1, ziformula=~0)
-  model2 <- glmmTMB(formila2, data = dados2, REML=T, family = familia2, ziformula=~0)
+  model1 <- glmmTMB(formila1, data = dados1, REML=T, family = familia1)
+  model2 <- glmmTMB(formila2, data = dados2, REML=T, family = familia2)
   
   bind_rows(
     
-    # size
-    bind_rows(
-      model1 %>% 
-        VarCorr() %>% 
-        unlist() %>%
-        data.frame() %>% 
-        rownames_to_column(var = 'fator') %>% 
-        rename(variance = '.'), 
-      
-      get_variance_residual(model1) %>% 
-        data.frame() %>% 
-        rownames_to_column(var = 'fator') %>% 
-        rename(variance = '.')  
-    ) %>% 
-      mutate(variavel = var1,
-             spp = spp),
+    model1 %>% 
+      get_variance() %>% 
+      unlist() %>% 
+      data.frame() %>% 
+      rownames_to_column(var = "effect") %>% 
+      rename(variance = ".") %>% 
+      mutate(model = spp,
+             variable = variable1,
+             effect = gsub("var.intercept.", "", effect) %>% 
+               gsub("var.", "", .)),
     
-    # abundance or cover
-    bind_rows(
-      model2 %>% 
-        VarCorr() %>% 
-        unlist() %>%
-        data.frame() %>% 
-        rownames_to_column(var = 'fator') %>% 
-        rename(variance = '.'), 
-      
-      get_variance_residual(model2) %>% 
-        data.frame() %>% 
-        rownames_to_column(var = 'fator') %>% 
-        rename(variance = '.')  
-    ) %>% 
-      mutate(variavel = var2,
-             spp = spp)
+    model2 %>% 
+      get_variance() %>% 
+      unlist() %>% 
+      data.frame() %>% 
+      rownames_to_column(var = "effect") %>% 
+      rename(variance = ".") %>% 
+      mutate(model = spp,
+             variable = variable2,
+             effect = gsub("var.intercept.", "", effect) %>% 
+               gsub("var.", "", .)
+      )
   )
 }

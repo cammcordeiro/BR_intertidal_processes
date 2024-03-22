@@ -8,25 +8,20 @@
 rm(list=ls())
 
 # load packages
-library(tidyverse)
-library(openxlsx)
 library(lubridate)
 library(factoextra)
-library(vegan)
-library(patchwork)
+library(ggrepel)
 
 
 # load functions
-source("functions/summarySE.r")
-source("functions/plot_pca_sep.r")
-source("functions/HighstatLibV6.R")
+source("read_data_functions.R")
 
 # set wd
 # setwd("/Users/cesarcordeiro/Google Drive/Post-doc_UNIFESP/Dados/NDVI/out/")
 # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
 ##### LER ESSE ARQUIVO
-ndvi <- read.csv("data/ndvi_ok_31May18.csv", header=TRUE, sep=",") # versão atualizada a partir dos comandos das linhas 34 - 75
+ndvi <- read.csv("~/git/intertidal_processes/data/ndvi_ok_31May18.csv", header=TRUE, sep=",") # versão atualizada a partir dos comandos das linhas 34 - 75
 # abiot2020 <- read.csv("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/data/abioticos_2020.csv", header=T)
 abiot <- read.csv("data/tetra_ab2020.csv", header=T) %>% 
   select(site, subregion, chl_mean:inclinacao, distance_S) %>% 
@@ -46,8 +41,11 @@ ndvi <- ndvi %>%
   left_join(abiot %>% 
               select(site, subregion, distance_S)) %>% 
   filter(diff > 0) %>% 
-  mutate(subregion = factor(subregion, levels = c("LRRJ", "MRRJ", "SCRJ", "Ubatuba", "SSCh", "MRBS")))
+  mutate(subregion = plyr::mapvalues(subregion, from = c("LRRJ", "MRRJ", "SCRJ", "MRBS"),
+                                     to = c("Lakes", "Rio de Janeiro", "Green Coast", "Baixada Santista"))) %>% 
+  mutate(subregion = factor(subregion, levels = c("Lakes","Rio de Janeiro","Green Coast","Ubatuba","SSCh","Baixada Santista"))) 
 
+abiotic <- read.csv("data/abioticos.csv", header=TRUE, sep=";", dec = ',')
 
 #
 ordem <- ndvi %>% 
@@ -56,9 +54,36 @@ ordem <- ndvi %>%
   arrange(distance_S) %>% 
   pull(site)
 
-
 ##########################
 ## FIGURE S2 (SVG 750x400)
+
+abiotic %>% str
+  mutate(site = factor(site, levels = ordem)) %>% 
+  ggplot(aes(x=distance_S, y=diff, color = subregion)) +
+  geom_point(alpha = 0.6) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(),
+        axis.text.x = element_text(size=12, color="black", angle = 0, vjust = 1, hjust = 0.5), 
+        axis.text.y = element_text(size=12, color="black"),
+        axis.title.x = element_text(color="black", size=14),
+        axis.title.y = element_text(color="black", size=16),
+        axis.ticks = element_line(colour = "black", size = 0.8),
+        strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.line = element_line(colour = 'black', size = 0.8),
+        axis.ticks.length = unit(4, "pt"),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 12, face="bold")) +
+  stat_summary(fun=mean, geom="point", shape=18, size=1, color="black") +
+  stat_summary(fun.data = mean_se, fun.args = list(mult = 1.96), color="black") +
+  labs(x="Distance from southernmost site (km)", y="NDVI") +
+  scale_color_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4"))
+
+
+##########################
+## FIGURE S3 (SVG 750x400)
 ndvi %>% 
   mutate(site = factor(site, levels = ordem)) %>% 
   ggplot(aes(x=distance_S, y=diff, color = subregion)) +
@@ -81,7 +106,8 @@ ndvi %>%
   stat_summary(fun=mean, geom="point", shape=18, size=1, color="black") +
   stat_summary(fun.data = mean_se, fun.args = list(mult = 1.96), color="black") +
   labs(x="Distance from southernmost site (km)", y="NDVI") +
-  scale_color_manual(values=c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02'))
+  scale_color_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4"))
+
 
 
 ##########################
@@ -103,80 +129,82 @@ which(is.na(abiotic), arr.ind = TRUE)
 #abiotic[31, 5] <- 1.14
 
 #
-corvif(abiotic %>% select(-subregion))
-
-res.pca <- prcomp(abiotic[-8], center = TRUE, scale. = TRUE)
-
-((res.pca$sdev)^2 / sum((res.pca$sdev)^2)) %>% cumsum()
-
-### PLOTS
-
-pca_1x2 <- fviz_pca_biplot(res.pca, 
-                       axes = c(1, 2),
-                       label = "var",
-                       title = "",
-                       repel = TRUE,
-                       habillage = abiotic$subregion,
-                       # addEllipses = TRUE,
-                       labelsize = 5,
-                       pointsize = 2,
-                       # ellipse.level = 0.95,
-                       # alpha.var="contrib",
-                       col.var = "black",
-                       ggtheme = theme_minimal()) +
-  scale_color_manual(values=c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02')) +
-  theme(panel.background = element_blank(),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        panel.spacing = unit(0,"null"))# + lims(y = c(-3.5, 2))
-
-
-hull_1x2 <- res.pca$x %>%
-  data.frame() %>%
-  bind_cols(subregion = abiotic$subregion) %>% 
-  group_by(subregion) %>% 
-  dplyr::slice(chull(PC1, PC2)) 
-
-Gpca_1 <- pca_1x2 +
-  geom_polygon(data = hull_1x2, aes(x = PC1, y = PC2, fill = subregion, color = subregion), alpha = 0.2, linetype = 2) +
-  scale_fill_manual(values=c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02'))
-
-
-#
-pca_1x3 <- fviz_pca_biplot(res.pca, 
-                           axes = c(1, 3),
-                           label = "var",
-                           title = "",
-                           repel = TRUE,
-                           habillage = abiotic$subregion,
-                           labelsize = 5,
-                           pointsize = 2,
-                           col.var = "black",
-                           ggtheme = theme_minimal()) +
-  scale_color_manual(values=c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02')) + 
-  theme(panel.background = element_blank(),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        panel.spacing = unit(0,"null"))# + lims(y = c(-3.5, 2))
-
-hull_1x3 <- res.pca$x %>%
-  data.frame() %>%
-  bind_cols(subregion = abiotic$subregion) %>% 
-  group_by(subregion) %>% 
-  dplyr::slice(chull(PC1, PC3)) 
-
-
-Gpca_2 <- pca_1x3 +
-  geom_polygon(data = hull_1x3, aes(x = PC1, y = PC3, fill = subregion, color = subregion), alpha = 0.2, linetype = 2) +
-  scale_fill_manual(values=c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02'))
-
-# FIGURE
-Gpca_1 + Gpca_2
+# corvif(abiotic %>% select(-subregion))
+# 
+# res.pca <- prcomp(abiotic[-8], center = TRUE, scale. = TRUE)
+# 
+# ((res.pca$sdev)^2 / sum((res.pca$sdev)^2)) %>% cumsum()
+# 
+# ### PLOTS
+# 
+# pca_1x2 <- fviz_pca_biplot(res.pca, 
+#                        axes = c(1, 2),
+#                        label = "var",
+#                        title = "",
+#                        repel = TRUE,
+#                        habillage = abiotic$subregion,
+#                        # addEllipses = TRUE,
+#                        labelsize = 5,
+#                        pointsize = 2,
+#                        # ellipse.level = 0.95,
+#                        # alpha.var="contrib",
+#                        col.var = "black",
+#                        ggtheme = theme_minimal()) +
+#   scale_color_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4")) +
+#   theme(panel.background = element_blank(),
+#         panel.grid.major = element_blank(),
+#         panel.grid.minor = element_blank(),
+#         panel.spacing = unit(0,"null"))# + lims(y = c(-3.5, 2))
+# 
+# 
+# hull_1x2 <- res.pca$x %>%
+#   data.frame() %>%
+#   bind_cols(subregion = abiotic$subregion) %>% 
+#   group_by(subregion) %>% 
+#   dplyr::slice(chull(PC1, PC2)) 
+# 
+# Gpca_1 <- pca_1x2 +
+#   geom_polygon(data = hull_1x2, aes(x = PC1, y = PC2, fill = subregion, color = subregion), alpha = 0.2, linetype = 2) +
+#   scale_fill_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4"))
+# 
+# 
+# #
+# pca_1x3 <- fviz_pca_biplot(res.pca, 
+#                            axes = c(1, 3),
+#                            label = "var",
+#                            title = "",
+#                            repel = TRUE,
+#                            habillage = abiotic$subregion,
+#                            labelsize = 5,
+#                            pointsize = 2,
+#                            col.var = "black",
+#                            ggtheme = theme_minimal()) +
+#   scale_color_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4")) + 
+#   theme(panel.background = element_blank(),
+#         panel.grid.major = element_blank(),
+#         panel.grid.minor = element_blank(),
+#         panel.spacing = unit(0,"null"))# + lims(y = c(-3.5, 2))
+# 
+# hull_1x3 <- res.pca$x %>%
+#   data.frame() %>%
+#   bind_cols(subregion = abiotic$subregion) %>% 
+#   group_by(subregion) %>% 
+#   dplyr::slice(chull(PC1, PC3)) 
+# 
+# 
+# Gpca_2 <- pca_1x3 +
+#   geom_polygon(data = hull_1x3, aes(x = PC1, y = PC3, fill = subregion, color = subregion), alpha = 0.2, linetype = 2) +
+#   scale_fill_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4"))
+# 
+# # FIGURE
+# Gpca_1 + Gpca_2
 
 
 ##########################
-### FIGURE 7
-# RDA
+### FIGURE 2
+##########################
+
+## RDA
 
 consumers <- read.csv("data/consumers.csv", header =T)
 fauna <- consumers[,c(1, 4:6,8:10,12:15)] 
@@ -244,11 +272,10 @@ sp = as.data.frame(ii$species[,1:2])*2#Depending on the drawing result, the draw
 st = as.data.frame(ii$sites[,1:2]) %>% 
   rownames_to_column("site") %>% 
   left_join(abiot %>% select(site, subregion)) %>% 
-  mutate(subregion = factor(subregion, levels = c("MRBS","SSCh","Ubatuba","SCRJ","MRRJ","LRRJ")))
-
+  mutate(subregion = factor(subregion, levels = c("LRRJ","MRRJ","SCRJ","Ubatuba","SSCh","MRBS"))) %>%
+  mutate(subregion = plyr::mapvalues(subregion, from = c("LRRJ", "MRRJ", "SCRJ", "MRBS"),
+                                     to = c("Lakes", "Rio de Janeiro", "Green Coast", "Baixada Santista")))
 yz = as.data.frame(ii$biplot[,1:2])
-
-c("LRRJ","MRRJ","SCRJ","Ubatuba","SSCh","MRBS")
 
 
 # polygon
@@ -257,133 +284,138 @@ hullSR <- st %>%
   dplyr::slice(chull(RDA1, RDA2))
 
 # plot
-ggplot() +
-  geom_point(data = st, aes(RDA1, RDA2, color = subregion), size = 1) + #, shape = subregion
-  scale_shape_manual(values = c(1, 21:25)) +
-  geom_point(data = sp, aes(RDA1, RDA2), shape = 3, size = 2) +
-  geom_text(data = sp, aes(RDA1, RDA2, label = row.names(sp)), vjust = -1) +
-  geom_segment(data = yz %>% slice(2:4), 
-               aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
-               arrow = arrow(angle = 22.5, length = unit(0.35,"cm"), type = "closed"), 
-               linetype = 1, size = 0.6, colour = "blue") +
-  geom_segment(data = yz %>% slice(1, 5:7), 
-               aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
-               arrow = arrow(angle = 22.5, length = unit(0.3,"cm"), type = "closed"), 
-               linetype = 2, size = 0.6, colour = "black") +
-  ggrepel::geom_text_repel(data = yz, aes(RDA1, RDA2, label = row.names(yz)), label.padding = 0.25) +
-  labs(x = paste("RDA 1 (", format(100 *ii$concont[[1]][2,1], digits=4), "%)", sep=""),
-       y = paste("RDA 2 (", format(100 *ii$concont[[1]][2,2], digits=4), "%)", sep=""))+
-  guides(shape=guide_legend(title=NULL,color="black"),
-         fill=guide_legend(title=NULL))+
-  theme_bw() + 
-  geom_polygon(data = hullSR, aes(x = RDA1, y = RDA2, fill = subregion, color = subregion), alpha = 0.3, linetype = 2) +
-  theme(panel.grid = element_blank()) +
-  scale_color_manual(values = c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02')) +
-  scale_fill_manual(values = c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02'))
-
-ggsave("figure2.svg", width = 8, height = 4.5, units = "in")
-
-
-## VARIANCE PARTITIONING
-# https://stackoverflow.com/questions/50177409/how-to-calculate-species-contribution-percentages-for-vegan-rda-cca-objects
-# RDA1 influence
-sort(round(100*scores(rda.fauna.red, display = "bp", scaling = 0)[,1]^2, 2), decreasing = TRUE)
-sort(round(100*scores(rda.fauna.red, display = "sp", scaling = 0)[,1]^2, 2), decreasing = TRUE)
-
-# RDA2 influence
-sort(round(100*scores(rda.fauna.red, display = "bp", scaling = 0)[,2]^2, 2), decreasing = TRUE)
-sort(round(100*scores(rda.fauna.red, display = "sp", scaling = 0)[,2]^2, 2), decreasing = TRUE)
-
-sum(100*scores(rda.fauna.red, display = "sp", scaling = 0)[,1]^2)
-
-# particao variancias
-tetra_ab2019 <- read.csv("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/data/old/tetra_ab.csv", header=T)
-
-pcnm.matrix <- tetra_ab2019 %>% 
-  select(site, easting, northing) %>% 
-  group_by(site) %>% 
-  summarise(easting = mean(easting),
-            northing = mean(northing)) %>% 
-  filter(!site %in% c("Tarituba", "Ferradurinha", "Ranchos", "Itaguá")) %>% 
-  column_to_rownames('site') %>% 
-  dist() %>% 
-  pcnm()
-
-pcnm.vectors <- as.data.frame(pcnm.matrix$vectors) 
-
-varpart(fauna.range %>% na.omit(), envi.sdz, pcnm.vectors) %>% plot()
-
-
-#############################################
-###### TESTING CORRELATIONS ######
-#############################################
-cor.test(fauna$nodi_size, fauna$nodi_ab, method = 'spearman') 
-cor.test(fauna$Tetr_size, fauna$Tetr_density, method = 'spearman')
-cor.test(fauna$Brach_cover, fauna$Brach_size, method = 'spearman')
-cor.test(fauna$lapa_size, fauna$lapa_dens, method = 'spearman') #
-cor.test(fauna$str_sizeC, fauna$str_densC, method = 'spearman') #
-
-fauna %>% 
-  dplyr::select(-site) %>%
-  PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
-
-# lapa_size x Tetr_density (n = 60)
-lapa_tetr <- cor.test(fauna$lapa_size, fauna$Tetr_density, method = 'spearman') #
-plot(fauna$lapa_size, fauna$Tetr_density, las=1)
-
-# lapa_size x Brach_size (n = 56)
-lapa_brach <- cor.test(fauna$lapa_size, fauna$Brach_size, method = 'spearman') #
-plot(fauna$lapa_size, fauna$Brach_size, las=1)
-
-# lapa_size x nodi_size (n = 60)
-lapa_nodi <- cor.test(fauna$lapa_size, fauna$nodi_size, method = 'spearman') #
-plot(fauna$lapa_size, fauna$nodi_size, las=1)
+hullSR %>%
+  mutate(subregion = plyr::mapvalues(subregion, from = c("LRRJ", "MRRJ", "SCRJ", "MRBS"),
+                                     to = c("Lakes", "Rio de Janeiro", "Green Coast", "Baixada santista"))) %>% 
+  ggplot() +
+    geom_polygon(aes(x = RDA1, y = RDA2, fill = subregion, color = subregion), linetype = 2, alpha = 0.5) +
+    geom_segment(data = yz %>% slice(2:4), 
+                 aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
+                 arrow = arrow(angle = 22.5, length = unit(0.35,"cm"), type = "closed"), 
+                 linetype = 1, size = 0.6, colour = "blue") +
+    geom_segment(data = yz %>% slice(1, 5:7), 
+                 aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
+                 arrow = arrow(angle = 22.5, length = unit(0.3,"cm"), type = "closed"), 
+                 linetype = 2, size = 0.6, colour = "black") +
+    geom_text_repel(data = yz, aes(RDA1, RDA2, label = row.names(yz)), label.padding = 0.25) +
+    labs(x = paste("RDA 1 (", format(100 *ii$concont[[1]][2,1], digits=4), "%)", sep=""),
+         y = paste("RDA 2 (", format(100 *ii$concont[[1]][2,2], digits=4), "%)", sep="")) +
+    geom_point(data = st, aes(RDA1, RDA2, color = subregion), size = 1) + #, shape = subregion
+    scale_shape_manual(values = c(1, 21:25)) +
+    geom_point(data = sp, aes(RDA1, RDA2), shape = 3, size = 2) +
+    geom_text(data = sp, aes(RDA1, RDA2, label = row.names(sp)), vjust = -1) +
+    guides(shape=guide_legend(title=NULL,color="black"),
+           fill=guide_legend(title=NULL))+
+    theme_bw() + 
+    theme(panel.grid = element_blank()) +
+    scale_color_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4")) +
+    scale_fill_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4"))
 
 
 
-fauna %>% 
-  ggplot(aes(x = lapa_size, y = Tetr_density)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  geom_label(aes(x = 2, y = 100), 
-             label = paste("r =", lapa_tetr$estimate[[1]] %>% round(2), "p < 0.001"))
 
-fauna %>% 
-  ggplot(aes(x = lapa_size, y = Brach_size)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  geom_label(aes(x = 2, y = 13), 
-             label = paste("r =", lapa_brach$estimate[[1]] %>% round(2), "p < 0.001"))
-
-fauna %>% 
-  ggplot(aes(x = lapa_size, y = nodi_size)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  geom_label(aes(x = 2, y = 6), 
-             label = paste("r =", lapa_nodi$estimate[[1]] %>% round(2), "p < 0.001"))
-
-#############################################
-#############################################
-
-
-bind_cols(
-  allvar1 %>% 
-    select(subregion, Tetr_density, Brach_cover, lapa_dens, str_densC, nodi_ab) %>% 
-    pivot_longer(cols = -subregion, values_to = "density", names_to = "abund"), 
-  allvar1 %>% 
-    select(subregion, Tetr_size, Brach_size, lapa_size, str_sizeC, nodi_size) %>% 
-    pivot_longer(cols = -subregion, values_to = "size", names_to = "tamanho") %>% 
-    select(-subregion)
-  ) %>% 
-  ggplot(aes(x = density, y = size)) +
-    geom_point() +
-    geom_smooth(method = "lm") +
-    facet_grid(. ~ abund, scales = 'free') +
-    theme_classic()
-
+dev.off()
+# 
+# ## VARIANCE PARTITIONING
+# # https://stackoverflow.com/questions/50177409/how-to-calculate-species-contribution-percentages-for-vegan-rda-cca-objects
+# # RDA1 influence
+# sort(round(100*scores(rda.fauna.red, display = "bp", scaling = 0)[,1]^2, 2), decreasing = TRUE)
+# sort(round(100*scores(rda.fauna.red, display = "sp", scaling = 0)[,1]^2, 2), decreasing = TRUE)
+# 
+# # RDA2 influence
+# sort(round(100*scores(rda.fauna.red, display = "bp", scaling = 0)[,2]^2, 2), decreasing = TRUE)
+# sort(round(100*scores(rda.fauna.red, display = "sp", scaling = 0)[,2]^2, 2), decreasing = TRUE)
+# 
+# sum(100*scores(rda.fauna.red, display = "sp", scaling = 0)[,1]^2)
+# 
+# # particao variancias
+# tetra_ab2019 <- read.csv("~/Google Drive/PUBLICACOES/CONSUMERS_SE-BR/2021/data/old/tetra_ab.csv", header=T)
+# 
+# pcnm.matrix <- tetra_ab2019 %>% 
+#   select(site, easting, northing) %>% 
+#   group_by(site) %>% 
+#   summarise(easting = mean(easting),
+#             northing = mean(northing)) %>% 
+#   filter(!site %in% c("Tarituba", "Ferradurinha", "Ranchos", "Itaguá")) %>% 
+#   column_to_rownames('site') %>% 
+#   dist() %>% 
+#   pcnm()
+# 
+# pcnm.vectors <- as.data.frame(pcnm.matrix$vectors) 
+# 
+# varpart(fauna.range %>% na.omit(), envi.sdz, pcnm.vectors) %>% plot()
+# 
+# 
+# #############################################
+# ###### TESTING CORRELATIONS ######
+# #############################################
+# cor.test(fauna$nodi_size, fauna$nodi_ab, method = 'spearman') 
+# cor.test(fauna$Tetr_size, fauna$Tetr_density, method = 'spearman')
+# cor.test(fauna$Brach_cover, fauna$Brach_size, method = 'spearman')
+# cor.test(fauna$lapa_size, fauna$lapa_dens, method = 'spearman') #
+# cor.test(fauna$str_sizeC, fauna$str_densC, method = 'spearman') #
+# 
+# fauna %>% 
+#   dplyr::select(-site) %>%
+#   PerformanceAnalytics::chart.Correlation(histogram=TRUE, pch=19)
+# 
+# # lapa_size x Tetr_density (n = 60)
+# lapa_tetr <- cor.test(fauna$lapa_size, fauna$Tetr_density, method = 'spearman') #
+# plot(fauna$lapa_size, fauna$Tetr_density, las=1)
+# 
+# # lapa_size x Brach_size (n = 56)
+# lapa_brach <- cor.test(fauna$lapa_size, fauna$Brach_size, method = 'spearman') #
+# plot(fauna$lapa_size, fauna$Brach_size, las=1)
+# 
+# # lapa_size x nodi_size (n = 60)
+# lapa_nodi <- cor.test(fauna$lapa_size, fauna$nodi_size, method = 'spearman') #
+# plot(fauna$lapa_size, fauna$nodi_size, las=1)
+# 
+# 
+# 
+# fauna %>% 
+#   ggplot(aes(x = lapa_size, y = Tetr_density)) +
+#   geom_point() +
+#   geom_smooth(method = "lm") +
+#   theme_classic() +
+#   geom_label(aes(x = 2, y = 100), 
+#              label = paste("r =", lapa_tetr$estimate[[1]] %>% round(2), "p < 0.001"))
+# 
+# fauna %>% 
+#   ggplot(aes(x = lapa_size, y = Brach_size)) +
+#   geom_point() +
+#   geom_smooth(method = "lm") +
+#   theme_classic() +
+#   geom_label(aes(x = 2, y = 13), 
+#              label = paste("r =", lapa_brach$estimate[[1]] %>% round(2), "p < 0.001"))
+# 
+# fauna %>% 
+#   ggplot(aes(x = lapa_size, y = nodi_size)) +
+#   geom_point() +
+#   geom_smooth(method = "lm") +
+#   theme_classic() +
+#   geom_label(aes(x = 2, y = 6), 
+#              label = paste("r =", lapa_nodi$estimate[[1]] %>% round(2), "p < 0.001"))
+# 
+# #############################################
+# #############################################
+# 
+# 
+# bind_cols(
+#   allvar1 %>% 
+#     select(subregion, Tetr_density, Brach_cover, lapa_dens, str_densC, nodi_ab) %>% 
+#     pivot_longer(cols = -subregion, values_to = "density", names_to = "abund"), 
+#   allvar1 %>% 
+#     select(subregion, Tetr_size, Brach_size, lapa_size, str_sizeC, nodi_size) %>% 
+#     pivot_longer(cols = -subregion, values_to = "size", names_to = "tamanho") %>% 
+#     select(-subregion)
+#   ) %>% 
+#   ggplot(aes(x = density, y = size)) +
+#     geom_point() +
+#     geom_smooth(method = "lm") +
+#     facet_grid(. ~ abund, scales = 'free') +
+#     theme_classic()
+# 
 
 
 

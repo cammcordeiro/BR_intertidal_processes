@@ -10,7 +10,7 @@ a <- fviz_pca_biplot(prcomp(dados1, center = TRUE, scale. = TRUE), repel = TRUE,
                 labelsize = 3, pointsize = 1, #alpha.var = 0.5,
                 invisible = "var"
                  ) + 
-                scale_color_manual(values=c(values=c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02'))) + #"red", "orange", "#E5E500", "darkgreen", "darkblue"
+                scale_color_manual(values=c(values=c(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4")))) + #"red", "orange", "#E5E500", "darkgreen", "darkblue"
                 theme(panel.background = element_blank(),
                                panel.grid.major = element_blank(),
                                panel.grid.minor = element_blank(),
@@ -54,7 +54,7 @@ ggplot(resumo, aes(x=distance_S, y=mean)) +
     # geom_smooth(method="lm", formula = y ~ splines::bs(x, 3)) +
     geom_errorbar(width=1, aes(ymin= mean-ci, ymax= mean+ci), colour="black") + 
     geom_point(aes(size=cv, bg=subregion), shape=22, color="lightgray") +
-    scale_fill_manual(values=c(values=c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02'))) +
+    scale_fill_manual(values=c(values=c(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4")))) +
     theme(panel.background = element_blank(),
                                panel.grid.major = element_blank(),
                                panel.grid.minor = element_blank(),
