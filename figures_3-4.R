@@ -25,12 +25,13 @@ tetra_d_sz <- plotg.col(tetra_sz, 14, 3, "Distance from southernmost site (km)",
 lapa_d_sz <- lapas_sz %>% 
   left_join(brachi_cv[,c("site", "distance_S")] %>% 
               distinct()) %>%
+  filter(tamanho_mm > 0) %>% 
   plotg.col(., 19, 4, "Distance from southernmost site (km)", "Size (mm)") + 
   ggtitle ('Lottia subrugosa') +
   theme(plot.title = element_text(face = "bold.italic"))
 
 echi_d_sz <- plotg.col(nodi_sz, 17, 2, "Distance from southernmost site (km)", "Size (mm)") + 
-  ggtitle ('Echinolittotina lineolata') +
+  ggtitle ('Echinolittorina lineolata') +
   theme(plot.title = element_text(face = "bold.italic")) 
 
 legs <- ggplot(nodi_sz, aes(subregion, tamanho_mm, color=subregion)) + 
