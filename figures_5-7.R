@@ -188,7 +188,7 @@ nod_sz_lat <- nodi_sz %>%
     theme_pred +
     scale_x_reverse() +
     labs(x = "Latitude (degrees)", y = "Size (cm)") +
-    ggtitle ('(E)')
+    ggtitle ('(A)')
 
 # read.csv("data/nodi_sz2020.csv", header=T) %>% 
 #   group_by(site) %>%
@@ -214,8 +214,8 @@ myt_cv_wf <- predict(scam_cv, se=T) %>% # check if this is the right way to pred
   geom_smooth(method = 'lm', color = "black") +
   geom_point(data = myt_agg, aes(y = cover, x = wf_log), size= 2.2, alpha=0.4) + 
   theme_pred +
-  labs(x = "log[wave fetch (km)]", y = "Cover (%)") +
-  ggtitle ('(E)') + 
+  labs(x = bquote('Wave fetch'~'['~log[10]~'(no. of cells) ]'), y = "Cover (%)") +
+  ggtitle ('(A)') + 
   ylim(0,1)
 
 
@@ -227,8 +227,8 @@ myt_cv_fwd <- predict(scam_cv, se=T) %>%
   geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cr"), color = "black") +
   geom_point(data = myt_agg, aes(y = cover, x = fwd_mean), size= 2.2, alpha=0.4) + 
   theme_pred +
-  labs(x = "Freshwater index", y = "") + #"Cover (%)"
-  ggtitle ('(F)') +
+  labs(x = "FwD", y = "") + #"Cover (%)"
+  ggtitle ('(B)') +
   ylim(0,1)
 
 # size x SST
@@ -242,7 +242,7 @@ myt_sz_sst <- lmer(tamanho_mm ~ sst_mean + (1|site), data = brachi_sz, REML= TRU
   theme_pred +
   labs(x = expression(paste("Sea surface temperature (",degree,"C)"), " cover (%)"), 
        y = "Size (mm)") +
-  ggtitle ('(G)')
+  ggtitle ('(C)')
 
 
 ##################################
@@ -250,68 +250,56 @@ myt_sz_sst <- lmer(tamanho_mm ~ sst_mean + (1|site), data = brachi_sz, REML= TRU
 ##################################
 
 # size ~ fwd_mean
-tet_sz_fwd <- glmmTMB(tamanho_mm ~ fwd_mean + (1|site), data=tetra_sz, REML=T) %>% 
+tet_sz_fwd <- tetra_sz %>% 
+  glmmTMB(tamanho_mm ~ fwd_mean + (1|site), ., REML=T) %>% 
   ggpredict(c("fwd_mean[all]"), type = c("fe")) %>% 
   data.frame() %>% 
   rename(fwd_mean = x) %>% 
   ggplot(., aes(fwd_mean, predicted)) +
   geom_ribbon(aes(y = NULL, ymin = conf.low, ymax = conf.high), fill = "grey50", alpha=0.5, stat = "identity") +
   geom_line(mapping = aes(x = fwd_mean, y = predicted), linewidth = 0.5, color="black") +
-  geom_point(data = tetra_sz, aes(y = tamanho_mm, x = fwd_mean), size= 2.2, alpha=0.4) + 
+  geom_point(data =  tetra_sz %>% 
+               group_by(site, quadrado) %>%
+               summarise(tamanho_mm = mean(tamanho_mm),
+                         fwd_mean = mean(fwd_mean)), aes(y = tamanho_mm, x = fwd_mean), size= 2.2, alpha=0.4) +
   theme_pred +
   labs(x = "FwD", 
        y = "Size (cm)") +
-  ggtitle ('(C)')
-
-
-# abundance x Chl-a
-tet_ab_chla <- tetra_ab %>%
-  # group_by(site) %>% 
-  # summarise(abun = mean(vivos_n),
-  #           chl_mean = mean(chl_mean)) %>% 
-  ggplot(aes(y = vivos_n, x = chl_mean)) + 
-  geom_smooth(method = 'lm', formula = y ~ x, fill = "grey50", color = "black") +
-  geom_point(size= 2.2, alpha=0.4) +
-  theme_pred +
-  labs(x = expression(paste("Chlorophyll", italic(" a "), " (mg.", l^-1,")")), 
-       y = expression(paste("Density (ind.100",cm^-2,")"))) +
   ggtitle ('(A)')
 
-# abundance x wf
-tet_ab_wf <- tetra_ab %>%
-  # group_by(site) %>% 
-  # summarise(abun = mean(vivos_n),
-  #           wf_log = mean(wf_log)) %>% 
-  ggplot(aes(y = vivos_n, x = wf_log)) + 
+
+# abundance x SST
+tet_ab_sst <- tetra_ab %>%
+  group_by(site) %>%
+  summarise(abun = mean(vivos_n),
+            sst_mean = mean(sst_mean)) %>%
+  ggplot(aes(y = abun, x = sst_mean)) + 
   geom_smooth(method = 'lm', formula = y ~ x, fill = "grey50", color = "black") +
   geom_point(size= 2.2, alpha=0.4) +
   theme_pred +
-  labs(x = bquote('Wave fetch'~'['~log[10]~'(no. of cells) ]'), 
-       y = "") +
+  labs(x = expression(paste("Sea surface temperature (",degree,"C)"), " cover (%)"), 
+       y = expression(paste("Density (ind.100",cm^-2,")"))) +
   ggtitle ('(B)')
 
 
 ########################################
 
-rm(list = setdiff(ls(), c("theme_pred", "str_wf", "str_pp", "str_brac", 
-                          "myt_cv_wf", "myt_cv_fwd", "myt_sz_sst",
-                          "tet_sz_fwd", "tet_pa_sst", "tet_ab_sst",
-                          "lot_sz_sst", "lot_sz_rug", "nod_sz_lat")))
 
-#######
-
-
-# Figura 5 = Stramonita + Mytilaster
-(((str_wf + str_pp) / ((str_brac + (str_random + legenda)))) / ((myt_cv_wf + myt_cv_fwd)) / 
-   ((myt_sz_sst + ((myt_random + ggtitle ('(H)')) + legenda))))
-
+# Figura 5 = Stramonita
+((str_wf + str_pp) / ((str_brac + (str_random + legenda))))
+ 
 # Figure 6 = Lottia
 ((lot_sz_sst + lot_sz_rug) / ((lot_sz_fwd + ((lot_random + ggtitle ('(D)')) + legenda))) / 
     (lot_ab_chl + lot_ab_wf)) 
 
-# Figure 7 = Tetraclita + Echinolittorina
-(((tet_ab_chla + tet_ab_wf) / (tet_sz_fwd + ((tetra_random + ggtitle ('(D)')) + legenda)))) / 
-(nod_sz_lat + ((nodi_random + ggtitle ('(F)')) + legenda))
+# Figura 7 = Mytilaster
+((myt_cv_wf + myt_cv_fwd)) / ((myt_sz_sst + ((myt_random + ggtitle ('(D)')) + legenda)))
+
+# Figure 8 = Tetraclita
+(tet_sz_fwd / tet_ab_sst / (tetra_random + ggtitle ('(C)') + legenda))
+
+# Figure 9 = Echinolittorina
+(nod_sz_lat + ((nodi_random + ggtitle ('(B)')) + legenda))
 
 
 #rm(list=ls())

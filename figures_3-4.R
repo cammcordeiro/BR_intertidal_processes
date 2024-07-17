@@ -11,7 +11,7 @@ source("read_data_functions.R")
 
 #### size x distance
 stra_d_sz <- plotg.col(stramonita_sz, 4, 7, "Distance from southernmost site (km)", "Size (mm)") + 
-  ggtitle ('Stramonita haemastoma') +
+  ggtitle ('Stramonita brasiliensis') +
   theme(plot.title = element_text(face = "bold.italic"))
 
 myti_d_sz <- plotg.col(brachi_sz, 13, 2, "Distance from southernmost site (km)", "Size (mm)") + 
@@ -71,7 +71,7 @@ str_d_ab <- stramonita_ab %>%
         legend.position = "",
         plot.title = element_text(size = 12, face="bold")) +
   labs(x="Distance from southernmost site (km)", y="Total abundance (n)") +
-  ggtitle ('Stramonita haemastoma') +
+  ggtitle ('Stramonita brasiliensis') +
   theme(plot.title = element_text(face = "bold.italic")) +
   scale_color_manual(values=c("purple3", "steelblue2","forestgreen", "goldenrod2","darkorange1", "firebrick4"))
 
